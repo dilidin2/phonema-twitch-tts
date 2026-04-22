@@ -27,6 +27,13 @@ One worker processes inference sequentially. Producer/consumer pattern streams c
 
 ## Installation
 
+### Clone the repo
+
+```bash
+git clone https://github.com/dilidin2/phonema-twitch-tts.git
+cd phonema-twitch-tts
+```
+
 ### 1. PyTorch (critical for performance)
 
 VoxCPM2 requires PyTorch ≥ 2.5.0. Pick the build matching your hardware:
