@@ -1,5 +1,9 @@
 # Phonema
 
+<p align="center">
+  <img src="img/image.png" width="480">
+</p>
+
 > *Phoneme* — the smallest unit of sound in a spoken language.
 
 Real-time Text-to-Speech service for Twitch using **VoxCPM2**. Listens to channel point redemptions and speaks the user's message instantly via audio streaming.
