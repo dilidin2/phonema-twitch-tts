@@ -57,8 +57,6 @@ uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/roc
 uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 ```
 
-> **AMD CPU note:** The ROCm build of PyTorch includes MKL/OpenMP optimizations that significantly outperform the standard CPU build, even on systems without an AMD GPU.
-
 ### 2. Project dependencies
 
 ```bash
