@@ -66,6 +66,18 @@ pip install voxcpm numpy fastapi uvicorn python-multipart twitchAPI pyyaml \
 
 ## Configuration
 
+### Get Twitch API Credentials
+
+1. Go to https://dev.twitch.tv/console
+2. Click **"Register Your Application"**
+3. Fill in:
+   - **Name**: any name for your app
+   - **OAuth Redirect URLs**: `http://localhost:17563`
+   - **Category**: `Chat Bot`
+   - **Client Type**: `Confidential`
+4. Copy the **Client ID**
+5. Click **"New Secret"** under Client Secret, then copy it
+
 ### Environment Variables (`.env`)
 
 Copy `.env.example` to `.env` and fill in the values:
