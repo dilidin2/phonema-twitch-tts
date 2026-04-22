@@ -42,14 +42,14 @@ cd phonema-twitch-tts
 
 VoxCPM2 requires PyTorch ≥ 2.5.0. Pick the build matching your hardware:
 
-**NVIDIA GPU (CUDA):**
+**NVIDIA GPU (CUDA 12.4–12.6):**
 ```bash
-uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu126
 ```
 
-**AMD GPU or CPU (ROCm — recommended for AMD CPUs):**
+**AMD GPU or CPU (ROCm 7.2 — recommended for AMD CPUs):**
 ```bash
-uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.2
+uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm7.2
 ```
 
 **Generic CPU:**
@@ -100,7 +100,7 @@ TWITCH_BROADCASTER_ID=123456789
 
 # Server
 PORT=8100
-HOST=0.0.0.0
+HOST=127.0.0.1
 
 # Optional: override model path for custom VoxCPM2 deployment
 # TTS_MODEL_PATH=/path/to/local/model
