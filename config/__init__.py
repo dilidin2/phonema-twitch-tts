@@ -66,7 +66,7 @@ def get_env_config() -> Dict[str, Any]:
 
     # Server config
     config["PORT"] = int(os.getenv("PORT", "8000"))
-    config["HOST"] = os.getenv("HOST", "0.0.0.0")
+    config["HOST"] = os.getenv("HOST", "127.0.0.1")
     config["MAX_QUEUE_SIZE"] = int(os.getenv("MAX_QUEUE_SIZE", "10"))
     config["REQUEST_TIMEOUT"] = int(os.getenv("REQUEST_TIMEOUT", "30"))
 

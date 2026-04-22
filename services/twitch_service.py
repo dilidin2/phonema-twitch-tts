@@ -128,10 +128,19 @@ class TwitchService:
                 logger.error(f"Failed to start redemption listener: {e}")
                 raise
 
+    max_input_chars = self.config.get("max_input_chars", 500)
+
     async def _handle_redemption(self, data):
         try:
             user_input = data.event.user_input
             user_id = data.event.user_id
+
+            if not user_input:
+                logger.warning(f"Empty redemption input from {user_id}")
+                return
+            if len(user_input) > self.max_input_chars:
+                logger.warning(f"Redemption input too long from {user_id} ({len(user_input)} chars, max {self.max_input_chars})")
+                user_input = user_input[:self.max_input_chars]
 
             logger.info(f"💰 Redemption received from {user_id}: '{user_input}'")
 

@@ -43,7 +43,7 @@ from services.audio_output import AudioOutputService
 
 # Pydantic models
 class TTSRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=500)
+    text: str = Field(..., min_length=1, max_length=CONFIG.get("max_input_chars", 500))
     voice_id: Optional[str] = None
 
 
@@ -150,9 +150,17 @@ async def lifespan(app: FastAPI):
     app.state.twitch_service = twitch_service
 
     # Connect callback from TwitchService to TTSService
+    max_chars = CONFIG.get("max_input_chars", 500)
+
     async def on_redemption(data):
         """Handle redemption events - submit to TTS queue"""
         text = data.get("user_input", "") or ""
+        if not text:
+            logger.warning("Redemption with empty input ignored")
+            return
+        if len(text) > max_chars:
+            logger.warning(f"Redemption input too long ({len(text)} chars, max {max_chars}) - truncated")
+            text = text[:max_chars]
         if text:
             logger.info(f"  Processing redemption: '{text}'")
             await tts_service.submit_request(

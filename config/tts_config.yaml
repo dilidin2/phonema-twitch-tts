@@ -19,6 +19,8 @@ voice_rotation:
     - "voice_b.wav"
     - "voice_c.wav"
 
+max_input_chars: 500
+
 queue:
   max_size: 10
   timeout: 30
@@ -27,5 +29,5 @@ logging:
   level: "INFO"
   file: "logs/app.log"
 
-host: "0.0.0.0"
+host: "127.0.0.1"
 port: 8100
