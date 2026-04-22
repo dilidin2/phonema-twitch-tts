@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Environment variables
+.env
+.env.local
+
+# Output files
+output/
+output/*
+*.wav
+*.mp3
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+docker-compose.override.yml
+.dockerignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# TOKENS E SECRETS
+token.json
+.env.backup
+*.bak
+
+# CACHE BUILD
+.mypy_cache/
+.pytest_cache/
+.coverage
+.htmlcov/
+
+# BUILD ARTIFACTS
+build/
+dist/
+*.egg-info/
+*.egg
+
+# IDE AGGIUNTIVI
+*.swp
+
+# Ruff
+.ruff_cache/

@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phonema — Real-Time TTS for Twitch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #09090b;
+  --bg-elevated: #111114;
+  --bg-card: #18181b;
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  --text-tertiary: #71717a;
+  --accent: #f59e0b;
+  --accent-dim: rgba(245, 158, 11, 0.12);
+  --accent-glow: rgba(245, 158, 11, 0.35);
+  --border: #27272a;
+  --radius: 16px;
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: 'Outfit', -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text-primary);
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Noise overlay ── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* ── Nav ── */
+nav {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  padding: 12px 28px;
+  background: rgba(17, 17, 20, 0.65);
+  backdrop-filter: blur(20px) saturate(1.4);
+  border: 1px solid rgba(39, 39, 42, 0.5);
+  border-radius: 100px;
+}
+
+nav .logo {
+  font-weight: 700;
+  font-size: 1.05rem;
+  letter-spacing: -0.02em;
+  color: var(--accent);
+}
+
+nav a {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color 0.2s;
+  font-weight: 400;
+}
+
+nav a:hover { color: var(--text-primary); }
+
+/* ── Hero ── */
+.hero {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 120px 24px 80px;
+  position: relative;
+}
+
+.hero-glow {
+  position: absolute;
+  width: 700px;
+  height: 700px;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -60%);
+  background: radial-gradient(circle, var(--accent-glow) 0%, transparent 65%);
+  pointer-events: none;
+  filter: blur(80px);
+}
+
+.hero h1 {
+  font-size: clamp(3rem, 7vw, 6.5rem);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.05;
+  text-align: center;
+  max-width: 900px;
+  position: relative;
+}
+
+.hero h1 .accent {
+  color: var(--accent);
+}
+
+.hero-sub {
+  margin-top: 28px;
+  font-size: clamp(1.05rem, 1.6vw, 1.3rem);
+  color: var(--text-secondary);
+  text-align: center;
+  max-width: 520px;
+  line-height: 1.6;
+  font-weight: 400;
+}
+
+.hero-ctas {
+  margin-top: 48px;
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 30px;
+  border-radius: 100px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: all 0.3s ease;
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #09090b;
+}
+
+.btn-primary:hover {
+  background: #fbbf24;
+  box-shadow: 0 0 30px var(--accent-glow);
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+.btn-secondary:hover {
+  color: var(--text-primary);
+  border-color: var(--text-tertiary);
+}
+
+.scroll-hint {
+  position: absolute;
+  bottom: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.scroll-line {
+  width: 1px;
+  height: 40px;
+  background: linear-gradient(to bottom, var(--text-tertiary), transparent);
+}
+
+/* ── Section shared ── */
+section {
+  padding: 120px 24px;
+  position: relative;
+}
+
+.section-label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 16px;
+}
+
+.section-title {
+  font-size: clamp(2rem, 4vw, 3.2rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  max-width: 600px;
+}
+
+/* ── Bento Features ── */
+.features {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.bento-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: auto;
+  gap: 16px;
+  margin-top: 56px;
+  grid-auto-flow: dense;
+}
+
+.bento-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 36px;
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.4s ease, transform 0.4s ease;
+}
+
+.bento-card:hover {
+  border-color: rgba(245, 158, 11, 0.3);
+  transform: translateY(-2px);
+}
+
+.bento-card.span-2 { grid-column: span 2; }
+.bento-card.tall { grid-row: span 2; }
+
+.bento-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: var(--accent-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+  font-size: 1.3rem;
+}
+
+.bento-card h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 10px;
+  letter-spacing: -0.01em;
+}
+
+.bento-card p {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+/* ── Architecture / Pipeline ── */
+.pipeline-section {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.pipeline-track {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin-top: 64px;
+  padding: 48px 0;
+  overflow-x: auto;
+}
+
+.pipeline-node {
+  flex-shrink: 0;
+  width: 200px;
+  padding: 28px 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  text-align: center;
+  transition: border-color 0.3s;
+}
+
+.pipeline-node:hover {
+  border-color: var(--accent);
+}
+
+.pipeline-node .node-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-tertiary);
+  margin-bottom: 8px;
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.pipeline-node .node-title {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.pipeline-arrow {
+  flex-shrink: 0;
+  width: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  font-size: 1.5rem;
+}
+
+/* ── Code block ── */
+.code-section {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.code-block {
+  margin-top: 48px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 32px;
+  overflow-x: auto;
+}
+
+.code-block pre {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.875rem;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+.code-block .kw { color: #c084fc; }
+.code-block .str { color: #34d399; }
+.code-block .fn { color: #60a5fa; }
+.code-block .cmt { color: var(--text-tertiary); font-style: italic; }
+
+/* ── CTA / Footer ── */
+.cta-section {
+  text-align: center;
+  padding: 140px 24px;
+}
+
+.cta-title {
+  font-size: clamp(2.5rem, 5vw, 4.5rem);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.1;
+  margin-bottom: 24px;
+}
+
+.cta-sub {
+  color: var(--text-secondary);
+  font-size: 1.1rem;
+  max-width: 480px;
+  margin: 0 auto 40px;
+  line-height: 1.6;
+}
+
+footer {
+  border-top: 1px solid var(--border);
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 0.85rem;
+}
+
+footer a {
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+footer a:hover { color: var(--accent); }
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  .bento-grid {
+    grid-template-columns: 1fr;
+  }
+  .bento-card.span-2,
+  .bento-card.tall {
+    grid-column: span 1;
+    grid-row: span 1;
+  }
+  .pipeline-track { flex-direction: column; gap: 8px; }
+  .pipeline-arrow { transform: rotate(90deg); width: auto; height: 30px; }
+  nav { padding: 10px 20px; gap: 20px; }
+}
+</style>
+</head>
+<body>
+
+<!-- Nav -->
+<nav>
+  <span class="logo">Phonema</span>
+  <a href="#features">Features</a>
+  <a href="#architecture">Architecture</a>
+  <a href="#install">Install</a>
+  <a href="https://github.com/phonema-tts/phonema" target="_blank">GitHub</a>
+</nav>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="hero-glow"></div>
+  <h1 id="hero-title">
+    Your Twitch chat<br><span class="accent">speaks aloud</span>
+  </h1>
+  <p class="hero-sub">
+    Real-time text-to-speech for channel point redemptions. Powered by VoxCPM2 with streaming audio that plays while it generates.
+  </p>
+  <div class="hero-ctas">
+    <a href="#install" class="btn btn-primary">Get Started</a>
+    <a href="https://github.com/phonema-tts/phonema" target="_blank" class="btn btn-secondary">View on GitHub</a>
+  </div>
+  <div class="scroll-hint">
+    <div class="scroll-line"></div>
+  </div>
+</section>
+
+<!-- Features Bento -->
+<section class="features" id="features">
+  <span class="section-label">Capabilities</span>
+  <h2 class="section-title">Everything your stream needs to talk back.</h2>
+
+  <div class="bento-grid">
+    <div class="bento-card span-2">
+      <div class="bento-icon">&#9889;</div>
+      <h3>Real-time streaming</h3>
+      <p>Audio plays the moment VoxCPM2 starts generating. No waiting for full synthesis -- your chat hears responses instantly with sub-second latency.</p>
+    </div>
+
+    <div class="bento-card">
+      <div class="bento-icon">&#9786;</div>
+      <h3>Voice cloning</h3>
+      <p>Drop in any reference audio file and Phonema clones that voice. 5-30 seconds of clear speech is all you need.</p>
+    </div>
+
+    <div class="bento-card">
+      <div class="bento-icon">&#8646;</div>
+      <h3>Voice rotation</h3>
+      <p>Cycle through multiple voices in random or sequential mode. Each redemption gets a different speaker.</p>
+    </div>
+
+    <div class="bento-card">
+      <div class="bento-icon">&#9881;</div>
+      <h3>Queue management</h3>
+      <p>Back-pressure controlled concurrent requests. The producer/consumer pattern keeps inference at playback speed.</p>
+    </div>
+
+    <div class="bento-card">
+      <div class="bento-icon">&#128276;</div>
+      <h3>Auto-reconnect</h3>
+      <p>OAuth tokens persist to disk. Restart the server and Phonema reconnects automatically -- no manual re-auth.</p>
+    </div>
+
+    <div class="bento-card span-2">
+      <div class="bento-icon">&#127769;</div>
+      <h3>Cross-platform</h3>
+      <p>Runs on CPU, NVIDIA CUDA, and AMD ROCm. The ROCm build of PyTorch even speeds up inference on AMD CPUs through MKL optimizations.</p>
+    </div>
+  </div>
+</section>
+
+<!-- Architecture -->
+<section class="pipeline-section" id="architecture">
+  <span class="section-label">Architecture</span>
+  <h2 class="section-title">From redemption to audio in one pipeline.</h2>
+
+  <div class="pipeline-track">
+    <div class="pipeline-node">
+      <div class="node-label">Event</div>
+      <div class="node-title">Twitch EventSub</div>
+    </div>
+    <div class="pipeline-arrow">&#8594;</div>
+    <div class="pipeline-node">
+      <div class="node-label">Service</div>
+      <div class="node-title">Twitch Service</div>
+    </div>
+    <div class="pipeline-arrow">&#8594;</div>
+    <div class="pipeline-node">
+      <div class="node-label">Queue</div>
+      <div class="node-title">TTS Queue</div>
+    </div>
+    <div class="pipeline-arrow">&#8594;</div>
+    <div class="pipeline-node">
+      <div class="node-label">Model</div>
+      <div class="node-title">VoxCPM2 Worker</div>
+    </div>
+    <div class="pipeline-arrow">&#8594;</div>
+    <div class="pipeline-node">
+      <div class="node-label">Output</div>
+      <div class="node-title">Audio Stream</div>
+    </div>
+  </div>
+</section>
+
+<!-- Install -->
+<section class="code-section" id="install">
+  <span class="section-label">Install</span>
+  <h2 class="section-title">Up and running in two steps.</h2>
+
+  <div class="code-block">
+<pre><span class="cmt"># 1. Install PyTorch (pick your hardware)</span>
+<span class="kw">pip</span> install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+<span class="cmt"># 2. Install Phonema dependencies</span>
+<span class="kw">pip</span> install voxcpm numpy fastapi uvicorn twitchAPI pyyaml \
+       python-dotenv loguru sounddevice soundfile
+
+<span class="cmt"># 3. Start the server</span>
+<span class="fn">python</span> main.py
+
+<span class="cmt"># 4. Connect to Twitch (first time only)</span>
+<span class="fn">curl</span> -X POST http://localhost:8100/twitch/connect</pre>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta-section">
+  <h2 class="cta-title">Ready to let<br><span style="color: var(--accent);">your stream talk?</span></h2>
+  <p class="cta-sub">Clone the repo, configure your voice, and connect to Twitch in under five minutes.</p>
+  <a href="https://github.com/phonema-tts/phonema" target="_blank" class="btn btn-primary">Clone on GitHub</a>
+</section>
+
+<!-- Footer -->
+<footer>
+  <p>Phonema &mdash; MIT License. VoxCPM2 model licensed under Apache 2.0.</p>
+</footer>
+
+<script>
+gsap.registerPlugin(ScrollTrigger);
+
+// Hero entrance
+const heroTl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+heroTl
+  .from('#hero-title', { y: 60, opacity: 0, duration: 1.1 })
+  .from('.hero-sub', { y: 30, opacity: 0, duration: 0.8 }, '-=0.6')
+  .from('.hero-ctas', { y: 20, opacity: 0, duration: 0.7 }, '-=0.5')
+  .from('.scroll-hint', { opacity: 0, duration: 0.6 }, '-=0.3');
+
+// Nav fade in
+gsap.from('nav', { y: -20, opacity: 0, duration: 0.8, delay: 0.3 });
+
+// Feature cards stagger
+gsap.utils.toArray('.bento-card').forEach((card, i) => {
+  gsap.from(card, {
+    scrollTrigger: {
+      trigger: card,
+      start: 'top 85%',
+      end: 'top 60%',
+      toggleActions: 'play none none reverse',
+    },
+    y: 40,
+    opacity: 0,
+    duration: 0.7,
+    delay: (i % 3) * 0.1,
+    ease: 'power2.out',
+  });
+});
+
+// Section labels + titles
+gsap.utils.toArray('.section-label').forEach(label => {
+  gsap.from(label, {
+    scrollTrigger: { trigger: label, start: 'top 90%', toggleActions: 'play none none reverse' },
+    opacity: 0, x: -20, duration: 0.5, ease: 'power2.out',
+  });
+});
+
+gsap.utils.toArray('.section-title').forEach(title => {
+  gsap.from(title, {
+    scrollTrigger: { trigger: title, start: 'top 85%', toggleActions: 'play none none reverse' },
+    y: 30, opacity: 0, duration: 0.7, ease: 'power2.out',
+  });
+});
+
+// Pipeline nodes fade in sequence
+gsap.utils.toArray('.pipeline-node').forEach((node, i) => {
+  gsap.from(node, {
+    scrollTrigger: { trigger: '.pipeline-track', start: 'top 80%', toggleActions: 'play none none reverse' },
+    y: 30, opacity: 0, duration: 0.5, delay: i * 0.12, ease: 'power2.out',
+  });
+});
+
+gsap.utils.toArray('.pipeline-arrow').forEach((arrow, i) => {
+  gsap.from(arrow, {
+    scrollTrigger: { trigger: '.pipeline-track', start: 'top 80%', toggleActions: 'play none none reverse' },
+    scale: 0.5, opacity: 0, duration: 0.4, delay: i * 0.12 + 0.06, ease: 'back.out(2)',
+  });
+});
+
+// Code block
+gsap.from('.code-block', {
+  scrollTrigger: { trigger: '.code-block', start: 'top 85%', toggleActions: 'play none none reverse' },
+  y: 30, opacity: 0, duration: 0.7, ease: 'power2.out',
+});
+
+// CTA section
+gsap.from('.cta-title', {
+  scrollTrigger: { trigger: '.cta-section', start: 'top 80%', toggleActions: 'play none none reverse' },
+  y: 40, opacity: 0, duration: 0.8, ease: 'power2.out',
+});
+
+gsap.from('.cta-sub', {
+  scrollTrigger: { trigger: '.cta-section', start: 'top 80%', toggleActions: 'play none none reverse' },
+  y: 20, opacity: 0, duration: 0.6, delay: 0.15, ease: 'power2.out',
+});
+
+// Glow pulse
+gsap.to('.hero-glow', {
+  scale: 1.15, opacity: 0.8,
+  repeat: -1, yoyo: true, duration: 4, ease: 'sine.inOut',
+});
+</script>
+</body>
+</html>

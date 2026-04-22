@@ -1,0 +1,22 @@
+# Core ML/Audio
+voxcpm
+numpy
+
+# Web/API
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Twitch integration
+twitchAPI>=4.5.0
+
+# Configuration
+pyyaml
+python-dotenv
+
+# Logging
+loguru
+
+# Audio processing
+sounddevice
+soundfile

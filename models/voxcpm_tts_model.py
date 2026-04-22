@@ -1,0 +1,423 @@
+"""
+VoxCPM2 TTS Model Wrapper — Unified (CPU/GPU)
+Wrapper for VoxCPM2 (openbmb/VoxCPM2) with CPU and GPU support.
+Maintains the same API interface as XttsTTSPipeline for compatibility.
+
+Requirements: pip install voxcpm torch
+Python ≥ 3.10, PyTorch ≥ 2.5.0 (with or without CUDA support)
+"""
+
+import os
+import re
+import numpy as np
+import soundfile as sf
+from typing import Tuple, Optional, Generator, List, Dict
+from loguru import logger
+
+
+def _ensure_voxcpm_installed():
+    """Checks that voxcpm is installed."""
+    try:
+        import voxcpm  # noqa: F401
+    except ImportError:
+        raise RuntimeError(
+            "VoxCPM non installato. Esegui: pip install voxcpm\n"
+            "Requisiti: Python ≥ 3.10, PyTorch ≥ 2.5.0 (con o senza CUDA)"
+        )
+
+
+def _patch_sdpa_for_cpu():
+    """
+    Workaround for VoxCPM2 bug on CPU.
+
+    During forward_step (autoregressive token-by-token decoding) the Q/K/V tensors
+    can be reduced to 1-2D due to unintentional squeeze in the
+    VoxCPM code. scaled_dot_product_attention requires at least 4D
+    [batch, heads, seq, head_dim] → IndexError: Dimension out of range.
+
+    This patch brings tensors to 4D before the call and removes the
+    added dimensions from the output, without altering values.
+    """
+    import torch
+    import torch.nn.functional as F
+
+    if getattr(F, "_voxcpm_sdpa_patched", False):
+        return  # already applied, avoid double wrapping
+
+    _orig_sdpa = F.scaled_dot_product_attention
+
+    def _safe_sdpa(
+        query,
+        key,
+        value,
+        attn_mask=None,
+        dropout_p=0.0,
+        is_causal=False,
+        scale=None,
+        enable_gqa=None,
+        **kwargs,
+    ):
+        q_dim = query.dim()
+        k_dim = key.dim()
+        v_dim = value.dim()
+
+        missing_q = max(0, 4 - q_dim)
+        missing_k = max(0, 4 - k_dim)
+        missing_v = max(0, 4 - v_dim)
+
+        # Add missing dimensions
+        if missing_q:
+            for _ in range(missing_q):
+                query = query.unsqueeze(0)
+        if missing_k:
+            for _ in range(missing_k):
+                key = key.unsqueeze(0)
+        if missing_v:
+            for _ in range(missing_v):
+                value = value.unsqueeze(0)
+        if attn_mask is not None:
+            mask_missing = max(0, 4 - attn_mask.dim())
+            for _ in range(mask_missing):
+                attn_mask = attn_mask.unsqueeze(0)
+
+        out = _orig_sdpa(
+            query,
+            key,
+            value,
+            attn_mask=attn_mask,
+            dropout_p=dropout_p,
+            is_causal=is_causal,
+            scale=scale,
+            enable_gqa=enable_gqa,
+            **kwargs,
+        )
+
+        # Remove added dimensions from output
+        if missing_q:
+            for _ in range(missing_q):
+                out = out.squeeze(0)
+        return out
+
+    F.scaled_dot_product_attention = _safe_sdpa
+    torch.nn.functional.scaled_dot_product_attention = _safe_sdpa
+    F._voxcpm_sdpa_patched = True
+
+
+class VoxCPMTTSPipeline:
+    """VoxCPM2 streaming pipeline wrapper with voice cloning (CPU/GPU)."""
+
+    MAX_CHUNK_CHARS: int = 400  # VoxCPM handles longer texts than XTTS
+    CHUNK_SILENCE_SEC: float = 0.1
+
+    def __init__(self, config: dict):
+        self.config = config
+        model_cfg = config["model"]
+
+        # Determine device (GPU if available, otherwise CPU)
+        import torch
+
+        # Priority: config override > CUDA availability > CPU fallback
+        force_cpu = (
+            self.config["model"].get("force_cpu", False)
+            or self.config["model"].get("device") == "cpu"
+        )
+
+        if force_cpu:
+            self.device = "cpu"
+            logger.info("CPU forced via config")
+
+            # Completely hide GPUs from PyTorch
+            import os
+
+            if not os.environ.get("CUDA_VISIBLE_DEVICES"):
+                os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+                logger.info("Set CUDA_VISIBLE_DEVICES=-1 to force CPU")
+        elif torch.cuda.is_available():
+            self.device = "cuda"
+            logger.info(f"CUDA available - using GPU")
+        else:
+            self.device = "cpu"
+            logger.info("No CUDA available - using CPU")
+
+        # Set PyTorch thread count for CPU
+        if self.device == "cpu":
+            logger.info("Applying SDPA patch for CPU stability...")
+            _patch_sdpa_for_cpu()
+            num_threads = model_cfg.get("num_threads_cpu", 4)
+            torch.set_num_threads(num_threads)
+            torch.set_num_interop_threads(num_threads)
+            logger.info(f"CPU threads: {num_threads}")
+
+           # SDPA patch for VoxCPM2 CPU bug workaround
+
+        self.sr = 48000  # VoxCPM2 native sample rate (48kHz)
+
+        # Load model from HuggingFace (or local path)
+        model_path = model_cfg.get("pretrained_path", "openbmb/VoxCPM2")
+        dtype_str = model_cfg.get("dtype", "float32")
+        self.dtype = torch.float32 if dtype_str == "float32" else torch.float16
+
+       logger.info(f"Loading VoxCPM2 from {model_path} on {self.device.upper()}...")
+        logger.info(f"  Device: {self.device} | Dtype: {dtype_str}")
+
+        _ensure_voxcpm_installed()
+
+        # Patch voxcpm to disable warm-up generation on CPU
+        if self.device == "cpu":
+            import torch.nn.functional as F
+            import voxcpm.core
+
+            # Disable warm-up generation during initialization
+            orig_init = voxcpm.core.VoxCPM.__init__
+
+            def _patched_init(self, *args, **kwargs):
+                kwargs["optimize"] = False  # Disable torch.compile to avoid warnings
+                orig_init(self, *args, **kwargs)
+
+            voxcpm.core.VoxCPM.__init__ = _patched_init
+
+        from voxcpm import VoxCPM
+
+        # Load model (load_denoiser=False for speed)
+        self.model = VoxCPM.from_pretrained(model_path, load_denoiser=False, optimize=False)
+
+        logger.info(
+            f"VoxCPM2 loaded! sr={self.sr} Hz | max_chunk={self.MAX_CHUNK_CHARS} chars"
+        )
+
+        # Cache per le reference voices
+        self._latents_cache: Dict[str, dict] = {}
+
+    def _get_latents(self, ref_audio: str) -> dict:
+        """Computes conditioning latents for a reference voice."""
+        if ref_audio not in self._latents_cache:
+            logger.info(f"Latents cache MISS → {os.path.basename(ref_audio)}")
+            self._latents_cache[ref_audio] = {"ref_path": ref_audio}
+            logger.info(f"Latents cache: {len(self._latents_cache)} voce/i")
+        else:
+            logger.debug(f"Latents cache HIT → {os.path.basename(ref_audio)}")
+
+        return self._latents_cache[ref_audio]
+
+    def warm_up_cache(self, voice_paths: List[str]):
+        """Pre-loads the reference voices (only latents, without inference)."""
+        logger.info(f"Warming up VoxCPM for {len(voice_paths)} voice(s)...")
+        for path in voice_paths:
+            if os.path.exists(path):
+                self._get_latents(path)
+            else:
+                logger.warning(f"Warm-up: file not found → {path}")
+        logger.info("VoxCPM warm-up completed (latents ready)")
+
+    def clear_cache(self, ref_audio: Optional[str] = None):
+        """Clears the cache."""
+        if ref_audio:
+            self._latents_cache.pop(ref_audio, None)
+        else:
+            self._latents_cache.clear()
+
+    def _split_into_chunks(self, text: str) -> List[str]:
+        """Splits text into smaller chunks."""
+        if len(text) <= self.MAX_CHUNK_CHARS:
+            return [text.strip()]
+
+        sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+        chunks: List[str] = []
+        current = ""
+
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+
+            candidate = f"{current} {sentence}".strip() if current else sentence
+            if len(candidate) <= self.MAX_CHUNK_CHARS:
+                current = candidate
+            else:
+                if current:
+                    chunks.append(current.strip())
+                current = sentence
+
+        if current:
+            chunks.append(current.strip())
+
+        chunks = [c for c in chunks if c]
+        logger.debug(f"Text split into {len(chunks)} chunks")
+        return chunks
+
+    def _infer_chunk_stream(
+        self,
+        text: str,
+        ref_audio: str,
+        speed: float = 1.0,
+        inference_timesteps: int = 4,
+  ) -> Generator[np.ndarray, None, None]:
+       """Generate audio for a single chunk with streaming."""
+        try:
+            for chunk in self.model.generate_streaming(
+                text=text,
+                reference_wav_path=ref_audio,
+            ):
+                if chunk is not None and len(chunk) > 0:
+                    yield chunk.astype(np.float32)
+        except Exception as e:
+            logger.error(f"Streaming error: {e}")
+            raise
+
+    def stream_voice_clone(
+        self,
+        text: str,
+        language: Optional[str] = None,
+        ref_audio: Optional[str] = None,
+        ref_text: Optional[str] = None,
+        chunk_size_sec: float = 0.5,
+        speed: float = 1.0,
+    ) -> Generator[Tuple[np.ndarray, int], None, None]:
+        """Streaming REALE: yield di (audio_chunk, sample_rate)."""
+        if not ref_audio or not os.path.exists(ref_audio):
+            raise FileNotFoundError(f"Reference audio not found: {ref_audio}")
+
+        latents = self._get_latents(ref_audio)
+        chunks = self._split_into_chunks(text)
+        n = len(chunks)
+        silence = np.zeros(int(self.CHUNK_SILENCE_SEC * self.sr), dtype=np.float32)
+
+        logger.info(
+            f"Streaming VoxCPM2 | voice: {os.path.basename(ref_audio)} | "
+            f"{n} chunk/s | {len(text)} chars"
+        )
+
+        for idx, chunk in enumerate(chunks, start=1):
+            logger.debug(f"  Chunk {idx}/{n}: '{chunk[:50]}...'")
+            for audio_piece in self._infer_chunk_stream(chunk, ref_audio, speed):
+                if len(audio_piece) > 0:
+                    yield audio_piece.astype(np.float32), self.sr
+
+            if idx < n:
+                yield silence
+
+    def generate_chunked(
+        self,
+        text: str,
+        language: Optional[str] = None,
+        ref_audio: Optional[str] = None,
+        ref_text: Optional[str] = None,
+        speed: float = 1.0,
+        **kwargs,
+    ) -> Tuple[np.ndarray, int]:
+        """Genera intero audio concatenando chunk."""
+        if not ref_audio or not os.path.exists(ref_audio):
+            raise FileNotFoundError(f"Reference audio not found: {ref_audio}")
+
+        inference_timesteps = 1
+
+        parts: List[np.ndarray] = []
+        for audio_chunk, _ in self.stream_voice_clone(
+            text,
+            language,
+            ref_audio,
+            ref_text,
+            speed=speed,
+            inference_timesteps=inference_timesteps,
+        ):
+            parts.append(audio_chunk)
+
+        if not parts:
+            return np.zeros(0, dtype=np.float32), self.sr
+
+        full_audio = np.concatenate(parts)
+        full_audio = self._post_process(full_audio)
+
+        logger.info(f"Done: {len(full_audio) / self.sr:.1f}s of audio")
+        return full_audio, self.sr
+
+    def generate_voice_clone(
+        self,
+        text: str,
+        language: Optional[str] = None,
+        ref_audio: Optional[str] = None,
+        ref_text: Optional[str] = None,
+        **kwargs,
+    ) -> Tuple[np.ndarray, int]:
+        """Alias di generate_chunked."""
+        return self.generate_chunked(text=text, language=language, ref_audio=ref_audio)
+
+    def generate_realtime_stream(
+        self,
+        text: str,
+        language: Optional[str] = None,
+        ref_audio: Optional[str] = None,
+        ref_text: Optional[str] = None,
+        speed: float = 1.0,
+        inference_timesteps: Optional[int] = None,
+    ) -> Generator[np.ndarray, None, None]:
+        """Generatore realtime per playback immediato (language ignorata - auto-detect)."""
+        if not ref_audio:
+            ref_audio = self.config["model"].get("ref_audio_path")
+
+        if not ref_audio or not os.path.exists(ref_audio):
+            raise FileNotFoundError(f"Reference audio not found: {ref_audio}")
+
+        if inference_timesteps is None:
+            inference_timesteps = self.config["model"].get("inference_timesteps", 1)
+
+        logger.info(
+            f"Streaming VoxCPM2 | voice: {os.path.basename(ref_audio)} | steps: {inference_timesteps}"
+        )
+
+        logger.info(f"Streaming TTS started for: {text[:30]}...")
+
+        latents = self._get_latents(ref_audio)
+        chunks = self._split_into_chunks(text)
+        n = len(chunks)
+        silence = np.zeros(int(self.CHUNK_SILENCE_SEC * self.sr), dtype=np.float32)
+
+        logger.info(f"Streaming VoxCPM2 | voice: {os.path.basename(ref_audio)}")
+
+        for idx, chunk in enumerate(chunks, start=1):
+            for audio_piece in self._infer_chunk_stream(
+                chunk, ref_audio, speed, inference_timesteps
+            ):
+                if audio_piece is not None and len(audio_piece) > 0:
+                    yield audio_piece.astype(np.float32)
+
+            if idx < n:
+                yield silence
+
+        logger.info("Streaming TTS completed.")
+
+    def generate_simple(
+        self,
+        text: str,
+        language: Optional[str] = None,
+    ) -> Tuple[np.ndarray, int]:
+        """Generazione semplice senza streaming."""
+        lang = language or self.config["model"].get("language", "it")
+        default_ref = self.config["model"].get("ref_audio_path")
+        if not default_ref:
+            raise ValueError(
+                "VoxCPM2 requires a reference audio. "
+                "Configure ref_audio_path in config."
+            )
+        return self.generate_chunked(text, lang, ref_audio=default_ref)
+
+    def _post_process(self, audio: np.ndarray) -> np.ndarray:
+        """Trim silenzio e normalizzazione."""
+        threshold = 0.005
+        mask = np.abs(audio) > threshold
+        if mask.any():
+            last = int(np.where(mask)[0][-1])
+            padding = int(0.3 * self.sr)
+            audio = audio[: min(last + padding, len(audio))]
+
+        # Fade-out finale
+        fade_len = int(0.1 * self.sr)
+        if len(audio) > fade_len:
+            audio[-fade_len:] *= np.linspace(1.0, 0.0, fade_len)
+
+        # Normalizzazione
+        max_val = np.max(np.abs(audio))
+        if max_val > 0:
+            audio = audio / max_val * 0.89
+
+        return audio.astype(np.float32)
