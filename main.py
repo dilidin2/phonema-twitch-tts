@@ -191,7 +191,7 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -388,7 +388,7 @@ async def list_output_files():
 if __name__ == "__main__":
     import uvicorn
 
-    host = CONFIG.get("host", "0.0.0.0")
+    host = CONFIG.get("host", "127.0.0.1")
     port = CONFIG.get("port", 8000)
 
     logger.info(f"Server starting on http://{host}:{port}")
