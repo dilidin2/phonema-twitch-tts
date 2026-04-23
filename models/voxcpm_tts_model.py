@@ -148,8 +148,6 @@ class VoxCPMTTSPipeline:
             torch.set_num_interop_threads(num_threads)
             logger.info(f"CPU threads: {num_threads}")
 
-            # Patch SDPA per workaround bug VoxCPM2 su CPU
-
         self.sr = 48000  # VoxCPM2 nativo (48kHz)
 
         # Carica modello da HuggingFace (o path locale)
@@ -180,41 +178,6 @@ class VoxCPMTTSPipeline:
 
         # Carica modello (load_denoiser=False per velocità)
         self.model = VoxCPM.from_pretrained(model_path, load_denoiser=False, optimize=False)
-
-        # Quantizzazione 8-bit su GPU (solo layer Linear del transformer)
-        use_quantization = model_cfg.get("use_quantization", False)
-
-        if self.device == "cuda" and use_quantization:
-            try:
-                import bitsandbytes as bnb
-
-                def quantize_linear_layers(module):
-                    for name, child in module.named_children():
-                        if isinstance(child, torch.nn.Linear):
-                            new_layer = bnb.nn.Linear8bitLt(
-                                child.in_features,
-                                child.out_features,
-                                bias=child.bias is not None,
-                                has_fp16_weights=False,
-                            )
-                            new_layer.weight = child.weight
-                            if child.bias is not None:
-                                new_layer.bias = child.bias
-                            setattr(module, name, new_layer)
-                        else:
-                            quantize_linear_layers(child)
-
-                logger.info("Applicando quantizzazione 8-bit su tts_model...")
-                quantize_linear_layers(self.model.tts_model)
-                self.model = self.model.cuda()
-                logger.success("Quantizzazione 8-bit completata!")
-            except ImportError:
-                logger.warning(
-                    "bitsandbytes non installato - skip quantizzazione. "
-                    "Esegui: uv pip install bitsandbytes"
-                )
-            except Exception as e:
-                logger.error(f"Errore durante quantizzazione: {e}")
 
         logger.info(
             f"VoxCPM2 loaded! sr={self.sr} Hz | max_chunk={self.MAX_CHUNK_CHARS} chars"
@@ -344,11 +307,9 @@ class VoxCPMTTSPipeline:
         if not ref_audio or not os.path.exists(ref_audio):
             raise FileNotFoundError(f"Reference audio not found: {ref_audio}")
 
-        inference_timesteps=1
-
         parts: List[np.ndarray] = []
         for audio_chunk, _ in self.stream_voice_clone(
-            text, language, ref_audio, ref_text, speed=speed, inference_timesteps=inference_timesteps
+            text, language, ref_audio, ref_text, speed=speed
         ):
             parts.append(audio_chunk)
 
