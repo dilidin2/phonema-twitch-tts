@@ -65,7 +65,7 @@ class AudioOutputService:
             try:
                 self.stream.write(chunk.astype(np.float32))
             except Exception as e:
-                logger.error(f"Errore durante la riproduzione del chunk: {e}")
+                logger.error(f"Error during chunk playback: {e}")
 
     # ── API asincrona (mantenuta per compatibilità) ───────────────────────────
 
@@ -98,4 +98,4 @@ class AudioOutputService:
         if self.stream:
             self.stream.stop()
             self.stream.close()
-            logger.info("Audio stream fermato.")
+            logger.info("Audio stream stopped.")

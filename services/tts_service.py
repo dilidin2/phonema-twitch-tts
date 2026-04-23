@@ -278,7 +278,7 @@ class TTSService:
             except asyncio.CancelledError:
                 raise  # let finally run, then propagate
             except Exception as e:
-                logger.error(f"Worker {worker_id}: errore critico: {e}", exc_info=True)
+                logger.error(f"Worker {worker_id}: critical error: {e}", exc_info=True)
             finally:
                 # Always called exactly once per get(), regardless of success/exception.
                 if _got_request:
@@ -286,7 +286,7 @@ class TTSService:
                         self.queue.task_done()
                     except ValueError:
                         # Should never happen, but just in case
-                        logger.warning(f"Worker {worker_id}: task_done() surplus ignorato")
+                        logger.warning(f"Worker {worker_id}: surplus task_done() ignored")
 
     async def submit_request(self, request: Dict[str, Any]) -> bool:
         if not self._is_running:

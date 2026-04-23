@@ -152,7 +152,7 @@ async def lifespan(app: FastAPI):
     async def on_redemption(data):
         """Handle redemption events - submit to TTS queue"""
         text = data.get("user_input", "") or ""
-        user_name = data.get("user_name", "Un utente")
+        user_name = data.get("user_name", "A user")
 
         if text:
             formatted_text = f"{user_name} says: {text}"

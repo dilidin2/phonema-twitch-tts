@@ -205,7 +205,7 @@ class VoxCPMTTSPipeline:
                 self._get_latents(path)
             else:
                 logger.warning(f"Warm-up: file not found → {path}")
-        logger.info("VoxCPM warm-up completato (latents pronti)")
+        logger.info("VoxCPM warm-up completed (latents ready)")
 
     def clear_cache(self, ref_audio: Optional[str] = None):
         """Svuota la cache."""
@@ -354,7 +354,7 @@ class VoxCPMTTSPipeline:
 
         logger.info(f"Streaming VoxCPM2 | voice: {os.path.basename(ref_audio)} | steps: {inference_timesteps}")
 
-        logger.info(f"Streaming TTS iniziato per: {text[:30]}...")
+        logger.info(f"Streaming TTS started for: {text[:30]}...")
 
         latents = self._get_latents(ref_audio)
         chunks = self._split_into_chunks(text)
@@ -371,7 +371,7 @@ class VoxCPMTTSPipeline:
             if idx < n:
                 yield silence
 
-        logger.info("Streaming TTS completato.")
+        logger.info("Streaming TTS completed.")
 
     def generate_simple(
         self,

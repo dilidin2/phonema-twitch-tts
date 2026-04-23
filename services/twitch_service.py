@@ -148,7 +148,7 @@ class TwitchService:
         try:
             user_input = data.event.user_input
             user_id = data.event.user_id
-            user_name = data.event.user_name or "Qualcuno"
+            user_name = data.event.user_name or "Someone"
 
             logger.info(
                 f"💰 Redemption from {user_name} ({user_id}): '{user_input}'"
