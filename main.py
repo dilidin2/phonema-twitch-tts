@@ -155,7 +155,7 @@ async def lifespan(app: FastAPI):
         user_name = data.get("user_name", "Un utente")
 
         if text:
-            formatted_text = f"{user_name} dice: {text}"
+            formatted_text = f"{user_name} says: {text}"
 
             logger.info(f"  Processing redemption from {user_name}: '{formatted_text}'")
             await tts_service.submit_request(
