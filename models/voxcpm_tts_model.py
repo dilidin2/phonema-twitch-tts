@@ -1,10 +1,10 @@
 """
 VoxCPM2 TTS Model Wrapper — Unified (CPU/GPU)
-Wrapper for VoxCPM2 (openbmb/VoxCPM2) with CPU and GPU support.
-Maintains the same API interface as XttsTTSPipeline for compatibility.
+Wrapper per VoxCPM2 (openbmb/VoxCPM2) con supporto CPU e GPU.
+Mantiene la stessa interfaccia API di XttsTTSPipeline per compatibilità.
 
-Requirements: pip install voxcpm torch
-Python ≥ 3.10, PyTorch ≥ 2.5.0 (with or without CUDA support)
+Requisiti: pip install voxcpm torch
+Python ≥ 3.10, PyTorch ≥ 2.5.0 (con o senza CUDA support)
 """
 
 import os
@@ -16,7 +16,7 @@ from loguru import logger
 
 
 def _ensure_voxcpm_installed():
-    """Checks that voxcpm is installed."""
+    """Verifica che voxcpm sia installato."""
     try:
         import voxcpm  # noqa: F401
     except ImportError:
@@ -25,24 +25,23 @@ def _ensure_voxcpm_installed():
             "Requisiti: Python ≥ 3.10, PyTorch ≥ 2.5.0 (con o senza CUDA)"
         )
 
-
 def _patch_sdpa_for_cpu():
     """
-    Workaround for VoxCPM2 bug on CPU.
+    Workaround per bug VoxCPM2 su CPU.
 
-    During forward_step (autoregressive token-by-token decoding) the Q/K/V tensors
-    can be reduced to 1-2D due to unintentional squeeze in the
-    VoxCPM code. scaled_dot_product_attention requires at least 4D
+    Durante forward_step (decoding autoregressivo token-by-token) i tensori
+    Q/K/V possono essere ridotti a 1-2D per un squeeze non intenzionale nel
+    codice VoxCPM. scaled_dot_product_attention richiede almeno 4D
     [batch, heads, seq, head_dim] → IndexError: Dimension out of range.
 
-    This patch brings tensors to 4D before the call and removes the
-    added dimensions from the output, without altering values.
+    Questo patch porta i tensori a 4D prima della chiamata e rimuove le
+    dimensioni aggiunte dall'output, senza alterare i valori.
     """
     import torch
     import torch.nn.functional as F
 
     if getattr(F, "_voxcpm_sdpa_patched", False):
-        return  # already applied, avoid double wrapping
+        return  # già applicato, evita doppio wrapping
 
     _orig_sdpa = F.scaled_dot_product_attention
 
@@ -65,7 +64,7 @@ def _patch_sdpa_for_cpu():
         missing_k = max(0, 4 - k_dim)
         missing_v = max(0, 4 - v_dim)
 
-        # Add missing dimensions
+        # Aggiungi dimensioni mancanti
         if missing_q:
             for _ in range(missing_q):
                 query = query.unsqueeze(0)
@@ -92,7 +91,7 @@ def _patch_sdpa_for_cpu():
             **kwargs,
         )
 
-        # Remove added dimensions from output
+        # Rimuovi dimensioni aggiunte dall'output
         if missing_q:
             for _ in range(missing_q):
                 out = out.squeeze(0)
@@ -103,17 +102,18 @@ def _patch_sdpa_for_cpu():
     F._voxcpm_sdpa_patched = True
 
 
-class VoxCPMTTSPipeline:
-    """VoxCPM2 streaming pipeline wrapper with voice cloning (CPU/GPU)."""
 
-    MAX_CHUNK_CHARS: int = 400  # VoxCPM handles longer texts than XTTS
+class VoxCPMTTSPipeline:
+    """VoxCPM2 streaming pipeline wrapper con voice cloning (CPU/GPU)."""
+
+    MAX_CHUNK_CHARS: int = 400  # VoxCPM gestisce testi più lunghi di XTTS
     CHUNK_SILENCE_SEC: float = 0.1
 
     def __init__(self, config: dict):
         self.config = config
         model_cfg = config["model"]
 
-        # Determine device (GPU if available, otherwise CPU)
+        # Determina dispositivo (GPU se disponibile, altrimenti CPU)
         import torch
 
         # Priority: config override > CUDA availability > CPU fallback
@@ -126,12 +126,12 @@ class VoxCPMTTSPipeline:
             self.device = "cpu"
             logger.info("CPU forced via config")
 
-            # Completely hide GPUs from PyTorch
+            # Nascondi completamente le GPU da PyTorch
             import os
 
             if not os.environ.get("CUDA_VISIBLE_DEVICES"):
                 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-                logger.info("Set CUDA_VISIBLE_DEVICES=-1 to force CPU")
+                logger.info("Nascosto CUDA_VISIBLE_DEVICES=-1 per forzare CPU")
         elif torch.cuda.is_available():
             self.device = "cuda"
             logger.info(f"CUDA available - using GPU")
@@ -139,47 +139,82 @@ class VoxCPMTTSPipeline:
             self.device = "cpu"
             logger.info("No CUDA available - using CPU")
 
-        # Set PyTorch thread count for CPU
+        # Imposta numero thread PyTorch per CPU
         if self.device == "cpu":
-            logger.info("Applying SDPA patch for CPU stability...")
+            logger.info("⚡ Applicazione Patch SDPA per stabilità su CPU...")
             _patch_sdpa_for_cpu()
             num_threads = model_cfg.get("num_threads_cpu", 4)
             torch.set_num_threads(num_threads)
             torch.set_num_interop_threads(num_threads)
             logger.info(f"CPU threads: {num_threads}")
 
-           # SDPA patch for VoxCPM2 CPU bug workaround
+            # Patch SDPA per workaround bug VoxCPM2 su CPU
 
-        self.sr = 48000  # VoxCPM2 native sample rate (48kHz)
+        self.sr = 48000  # VoxCPM2 nativo (48kHz)
 
-        # Load model from HuggingFace (or local path)
+        # Carica modello da HuggingFace (o path locale)
         model_path = model_cfg.get("pretrained_path", "openbmb/VoxCPM2")
         dtype_str = model_cfg.get("dtype", "float32")
         self.dtype = torch.float32 if dtype_str == "float32" else torch.float16
 
-       logger.info(f"Loading VoxCPM2 from {model_path} on {self.device.upper()}...")
+        logger.info(f"Loading VoxCPM2 from {model_path} on {self.device.upper()}...")
         logger.info(f"  Device: {self.device} | Dtype: {dtype_str}")
 
         _ensure_voxcpm_installed()
 
-        # Patch voxcpm to disable warm-up generation on CPU
+        # Patch voxcpm per disabilitare warm-up generation su CPU
         if self.device == "cpu":
             import torch.nn.functional as F
             import voxcpm.core
 
-            # Disable warm-up generation during initialization
+            # Disabilita il warm-up generation durante l'inizializzazione
             orig_init = voxcpm.core.VoxCPM.__init__
 
             def _patched_init(self, *args, **kwargs):
-                kwargs["optimize"] = False  # Disable torch.compile to avoid warnings
+                kwargs["optimize"] = False  # Disable torch.compile per evitare warning
                 orig_init(self, *args, **kwargs)
 
             voxcpm.core.VoxCPM.__init__ = _patched_init
 
         from voxcpm import VoxCPM
 
-        # Load model (load_denoiser=False for speed)
+        # Carica modello (load_denoiser=False per velocità)
         self.model = VoxCPM.from_pretrained(model_path, load_denoiser=False, optimize=False)
+
+        # Quantizzazione 8-bit su GPU (solo layer Linear del transformer)
+        use_quantization = model_cfg.get("use_quantization", False)
+
+        if self.device == "cuda" and use_quantization:
+            try:
+                import bitsandbytes as bnb
+
+                def quantize_linear_layers(module):
+                    for name, child in module.named_children():
+                        if isinstance(child, torch.nn.Linear):
+                            new_layer = bnb.nn.Linear8bitLt(
+                                child.in_features,
+                                child.out_features,
+                                bias=child.bias is not None,
+                                has_fp16_weights=False,
+                            )
+                            new_layer.weight = child.weight
+                            if child.bias is not None:
+                                new_layer.bias = child.bias
+                            setattr(module, name, new_layer)
+                        else:
+                            quantize_linear_layers(child)
+
+                logger.info("Applicando quantizzazione 8-bit su tts_model...")
+                quantize_linear_layers(self.model.tts_model)
+                self.model = self.model.cuda()
+                logger.success("Quantizzazione 8-bit completata!")
+            except ImportError:
+                logger.warning(
+                    "bitsandbytes non installato - skip quantizzazione. "
+                    "Esegui: uv pip install bitsandbytes"
+                )
+            except Exception as e:
+                logger.error(f"Errore durante quantizzazione: {e}")
 
         logger.info(
             f"VoxCPM2 loaded! sr={self.sr} Hz | max_chunk={self.MAX_CHUNK_CHARS} chars"
@@ -189,7 +224,7 @@ class VoxCPMTTSPipeline:
         self._latents_cache: Dict[str, dict] = {}
 
     def _get_latents(self, ref_audio: str) -> dict:
-        """Computes conditioning latents for a reference voice."""
+        """Calcola latents di condizionamento per una reference voice."""
         if ref_audio not in self._latents_cache:
             logger.info(f"Latents cache MISS → {os.path.basename(ref_audio)}")
             self._latents_cache[ref_audio] = {"ref_path": ref_audio}
@@ -200,24 +235,24 @@ class VoxCPMTTSPipeline:
         return self._latents_cache[ref_audio]
 
     def warm_up_cache(self, voice_paths: List[str]):
-        """Pre-loads the reference voices (only latents, without inference)."""
-        logger.info(f"Warming up VoxCPM for {len(voice_paths)} voice(s)...")
+        """Pre-carica le reference voices (solo latents, senza inferenza)."""
+        logger.info(f"Warming up VoxCPM for {len(voice_paths)} voce/i...")
         for path in voice_paths:
             if os.path.exists(path):
                 self._get_latents(path)
             else:
                 logger.warning(f"Warm-up: file not found → {path}")
-        logger.info("VoxCPM warm-up completed (latents ready)")
+        logger.info("VoxCPM warm-up completato (latents pronti)")
 
     def clear_cache(self, ref_audio: Optional[str] = None):
-        """Clears the cache."""
+        """Svuota la cache."""
         if ref_audio:
             self._latents_cache.pop(ref_audio, None)
         else:
             self._latents_cache.clear()
 
     def _split_into_chunks(self, text: str) -> List[str]:
-        """Splits text into smaller chunks."""
+        """Divide il testo in chunk più piccoli."""
         if len(text) <= self.MAX_CHUNK_CHARS:
             return [text.strip()]
 
@@ -251,8 +286,8 @@ class VoxCPMTTSPipeline:
         ref_audio: str,
         speed: float = 1.0,
         inference_timesteps: int = 4,
-  ) -> Generator[np.ndarray, None, None]:
-       """Generate audio for a single chunk with streaming."""
+    ) -> Generator[np.ndarray, None, None]:
+        """Genera audio per un singolo chunk con streaming."""
         try:
             for chunk in self.model.generate_streaming(
                 text=text,
@@ -309,16 +344,11 @@ class VoxCPMTTSPipeline:
         if not ref_audio or not os.path.exists(ref_audio):
             raise FileNotFoundError(f"Reference audio not found: {ref_audio}")
 
-        inference_timesteps = 1
+        inference_timesteps=1
 
         parts: List[np.ndarray] = []
         for audio_chunk, _ in self.stream_voice_clone(
-            text,
-            language,
-            ref_audio,
-            ref_text,
-            speed=speed,
-            inference_timesteps=inference_timesteps,
+            text, language, ref_audio, ref_text, speed=speed, inference_timesteps=inference_timesteps
         ):
             parts.append(audio_chunk)
 
@@ -361,11 +391,9 @@ class VoxCPMTTSPipeline:
         if inference_timesteps is None:
             inference_timesteps = self.config["model"].get("inference_timesteps", 1)
 
-        logger.info(
-            f"Streaming VoxCPM2 | voice: {os.path.basename(ref_audio)} | steps: {inference_timesteps}"
-        )
+        logger.info(f"Streaming VoxCPM2 | voice: {os.path.basename(ref_audio)} | steps: {inference_timesteps}")
 
-        logger.info(f"Streaming TTS started for: {text[:30]}...")
+        logger.info(f"Streaming TTS iniziato per: {text[:30]}...")
 
         latents = self._get_latents(ref_audio)
         chunks = self._split_into_chunks(text)
@@ -375,16 +403,14 @@ class VoxCPMTTSPipeline:
         logger.info(f"Streaming VoxCPM2 | voice: {os.path.basename(ref_audio)}")
 
         for idx, chunk in enumerate(chunks, start=1):
-            for audio_piece in self._infer_chunk_stream(
-                chunk, ref_audio, speed, inference_timesteps
-            ):
+            for audio_piece in self._infer_chunk_stream(chunk, ref_audio, speed, inference_timesteps):
                 if audio_piece is not None and len(audio_piece) > 0:
                     yield audio_piece.astype(np.float32)
 
             if idx < n:
                 yield silence
 
-        logger.info("Streaming TTS completed.")
+        logger.info("Streaming TTS completato.")
 
     def generate_simple(
         self,

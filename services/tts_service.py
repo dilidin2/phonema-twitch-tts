@@ -20,13 +20,13 @@ from models.voxcpm_tts_model import VoxCPMTTSPipeline
 
 class VoiceRotator:
     """
-    Selects the reference voice for each TTS request.
+    Seleziona la reference voice per ogni richiesta TTS.
 
-    Modes (set via config["model"]["voice_rotation"]):
-      - "sequential"  → rotates in cyclic order (A B C A B C ...)  [default]
-      - "random"      → chooses randomly, avoiding repeating
-                       the same voice twice in a row
-      - "disabled"    → always uses ref_audio_path (original behavior)
+    Modalità (impostabili via config["model"]["voice_rotation"]):
+      - "sequential"  → gira in ordine ciclico (A B C A B C …)  [default]
+      - "random"      → sceglie casualmente, evitando di ripetere
+                        la stessa voce due volte di fila
+      - "disabled"    → usa sempre ref_audio_path (comportamento originale)
     """
 
     def __init__(self, config: dict):
@@ -47,14 +47,14 @@ class VoiceRotator:
             single = model_cfg.get("ref_audio_path", "")
             self.voices = [single] if single else []
             if self.voices:
-        logger.info(
-                "VoiceRotator: no voice list, using single ref_audio_path"
-            )
+                logger.info(
+                    "VoiceRotator: nessuna lista voci, uso ref_audio_path singolo"
+                )
 
         if not self.voices:
             raise ValueError(
-                "VoiceRotator: no voice configured. "
-                "Set model.voice_rotation.voices or model.ref_audio_path in config."
+                "VoiceRotator: nessuna voce configurata. "
+                "Imposta model.voice_rotation.voices o model.ref_audio_path nel config."
             )
 
         for v in self.voices:
@@ -65,8 +65,8 @@ class VoiceRotator:
         self._last_idx: int = -1
 
         logger.info(
-            f"VoiceRotator ready: {len(self.voices)} voice(s), "
-            f"mode '{self.mode}' | {[os.path.basename(v) for v in self.voices]}"
+            f"VoiceRotator pronto: {len(self.voices)} voce/i, "
+            f"modalità '{self.mode}' | {[os.path.basename(v) for v in self.voices]}"
         )
 
     def next(self) -> str:
@@ -104,7 +104,7 @@ class TTSService:
         self.config = config
         self.output_dir = config["output"]["directory"]
         self.format = config["output"]["format"]
-        self.sample_rate = 48000  # VoxCPM2 native
+        self.sample_rate = 48000  # VoxCPM2 nativo
 
         os.makedirs(self.output_dir, exist_ok=True)
 
@@ -118,7 +118,7 @@ class TTSService:
         self.worker_tasks: list = []
         self._is_running = False
 
-        # Semaphore: only one inference at a time
+        # Semaforo: una sola inferenza alla volta
         self._inference_lock = asyncio.Semaphore(1)
 
         self.voice_rotator = VoiceRotator(config)
@@ -228,8 +228,8 @@ class TTSService:
                     nonlocal chunk_count
                     accumulated: list = []
 
-                    # Buffering based on CHUNK NUMBER, not time
-                    # Wait for 3 chunks before starting playback to give advantage to CPU
+                    # Buffering basato sul NUMERO di chunk, non sul tempo
+                    # Aspetta 3 chunk prima di iniziare il playback per dare vantaggio alla CPU
                     TARGET_BUFFER_CHUNKS = 1
 
                     while True:
@@ -252,10 +252,11 @@ class TTSService:
                         accumulated.append(chunk)
                         audio_buffer.task_done()
 
-                  # Flush ONLY when we have accumulated enough chunks
-                    # or when streaming is complete
-                        flush = len(accumulated) >= TARGET_BUFFER_CHUNKS or (
-                            streaming_done.is_set() and audio_buffer.empty()
+                        # Flusha SOLO quando abbiamo accumulato abbastanza chunk
+                        # o quando lo streaming è completato
+                        flush = (
+                            len(accumulated) >= TARGET_BUFFER_CHUNKS
+                            or (streaming_done.is_set() and audio_buffer.empty())
                         )
 
                         if flush:
@@ -270,14 +271,14 @@ class TTSService:
                 await asyncio.gather(producer(), consumer())
 
                 logger.success(
-                    f"Worker {worker_id}: streaming completed "
-                    f"({chunk_count} chunks played)."
+                    f"Worker {worker_id}: streaming completato "
+                    f"({chunk_count} chunk riprodotti)."
                 )
 
             except asyncio.CancelledError:
                 raise  # let finally run, then propagate
             except Exception as e:
-                logger.error(f"Worker {worker_id}: critical error: {e}", exc_info=True)
+                logger.error(f"Worker {worker_id}: errore critico: {e}", exc_info=True)
             finally:
                 # Always called exactly once per get(), regardless of success/exception.
                 if _got_request:
@@ -285,9 +286,7 @@ class TTSService:
                         self.queue.task_done()
                     except ValueError:
                         # Should never happen, but just in case
-                        logger.warning(
-                            f"Worker {worker_id}: ignored surplus task_done()"
-                        )
+                        logger.warning(f"Worker {worker_id}: task_done() surplus ignorato")
 
     async def submit_request(self, request: Dict[str, Any]) -> bool:
         if not self._is_running:

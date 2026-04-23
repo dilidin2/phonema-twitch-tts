@@ -43,7 +43,7 @@ from services.audio_output import AudioOutputService
 
 # Pydantic models
 class TTSRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=CONFIG.get("max_input_chars", 500))
+    text: str = Field(..., min_length=1, max_length=500)
     voice_id: Optional[str] = None
 
 
@@ -67,7 +67,6 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
     logger.info("  Starting Twitch Channel Points TTS Server")
     logger.info("  Model: VoxCPM2 (BMB/ModelScope)")
-    logger.info("  Language: Italian voice synthesis")
     logger.info("=" * 60)
 
     # Check CUDA availability
@@ -84,7 +83,7 @@ async def lifespan(app: FastAPI):
         cuda_available = False
 
         if not gpu_disabilitata and torch.cuda.is_available():
-            # Physically test the GPUs
+            # Testiamo fisicamente le GPU
             for i in range(torch.cuda.device_count()):
                 try:
                     torch.cuda.get_device_properties(i)
@@ -150,22 +149,18 @@ async def lifespan(app: FastAPI):
     app.state.twitch_service = twitch_service
 
     # Connect callback from TwitchService to TTSService
-    max_chars = CONFIG.get("max_input_chars", 500)
-
     async def on_redemption(data):
         """Handle redemption events - submit to TTS queue"""
         text = data.get("user_input", "") or ""
-        if not text:
-            logger.warning("Redemption with empty input ignored")
-            return
-        if len(text) > max_chars:
-            logger.warning(f"Redemption input too long ({len(text)} chars, max {max_chars}) - truncated")
-            text = text[:max_chars]
+        user_name = data.get("user_name", "Un utente")
+
         if text:
-            logger.info(f"  Processing redemption: '{text}'")
+            formatted_text = f"{user_name} dice: {text}"
+
+            logger.info(f"  Processing redemption from {user_name}: '{formatted_text}'")
             await tts_service.submit_request(
                 {
-                    "text": text,
+                    "text": formatted_text,
                     "ref_text": CONFIG["model"].get("ref_text", ""),
                 }
             )
@@ -185,9 +180,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Phonema",
-    description="Real-time TTS service for Twitch channel points redemptions using VoxCPM2",
-    version="1.0.0",
+    title="Twitch Channel Points TTS",
+    description="Local TTS service for Twitch channel points redemptions using VoxCPM2",
+    version="3.0.0",  # Bump version per VoxCPM2
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
@@ -293,7 +288,7 @@ async def get_queue_status():
         "max_size": queue.maxsize,
         "active_workers": len(app.state.tts_service.worker_tasks),
         "is_running": app.state.tts_service._is_running,
-        "model": "VoxCPM2",  # Additional info
+        "model": "VoxCPM2",  # Info aggiuntiva
     }
 
 
@@ -353,12 +348,10 @@ async def reconnect_twitch():
         broadcaster_id = os.getenv("TWITCH_BROADCASTER_ID")
         if broadcaster_id:
             await twitch_service.listen_channel_points_redemption(broadcaster_id)
-            return {
-                "status": "reconnected",
-                "message": "Using saved tokens from token.json",
-            }
+            return {"status": "reconnected", "message": "Using saved tokens from token.json"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @app.get("/twitch/status")
@@ -375,6 +368,20 @@ async def get_twitch_status():
         and eventsub._running
         if eventsub
         else False,
+    }
+
+
+@app.get("/output/list")
+async def list_output_files():
+    """List recently generated audio files"""
+    import glob
+
+    output_dir = CONFIG["output"]["directory"]
+    files = sorted(glob.glob(f"{output_dir}/*.wav"), reverse=True)
+
+    return {
+        "count": len(files),
+        "files": [os.path.basename(f) for f in files[:20]],  # Last 20 files
     }
 
 

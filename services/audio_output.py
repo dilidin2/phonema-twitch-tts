@@ -1,6 +1,6 @@
 """
 Audio Output Service - Streaming Edition
-Handles real-time audio playback using sounddevice.
+Gestisce la riproduzione audio in tempo reale utilizzando sounddevice.
 """
 
 import os
@@ -16,15 +16,15 @@ _BLOCKSIZE = 2048
 
 
 class AudioOutputService:
-    """Handles audio playback for TTS chunks and WAV files"""
+    """Gestisce la riproduzione audio per i chunk TTS e file WAV"""
 
     def __init__(self, method: str = "direct"):
         """
-        Initialize the audio output service.
+        Inizializza il servizio di output audio.
 
         Args:
-            method: "direct" uses sounddevice (recommended for streaming),
-                    "streamerbot" for external integrations.
+            method: "direct" usa sounddevice (consigliato per streaming),
+                    "streamerbot" per integrazioni esterne.
         """
         self.method = method
         self.samplerate = 48000  # VoxCPM2 nativo (48kHz)
@@ -45,39 +45,39 @@ class AudioOutputService:
                 )
                 self.stream.start()
                 logger.info(
-                   f"SoundDevice stream started (48kHz, Mono, "
+                    f"SoundDevice stream started (24kHz, Mono, "
                     f"blocksize={_BLOCKSIZE}, latency=low)"
                 )
             except Exception as e:
                 logger.error(f"SoundDevice initialization error: {e}")
 
-    # ── Sync API (use inside asyncio.to_thread) ──────────────────────────────
+    # ── API sincrona (da usare dentro asyncio.to_thread) ─────────────────────
 
     def play_chunk_sync(self, chunk: np.ndarray) -> None:
         """
-        Plays an audio chunk synchronously.
+        Riproduce un chunk di audio in modo sincrono.
 
-        This is the version to call inside a thread (asyncio.to_thread).
-        stream.write() with latency='low' blocks when the ring-buffer is
-        full, forcing the generator to proceed at playback speed.
+        Questa è la versione da chiamare dentro un thread (asyncio.to_thread).
+        stream.write() con latency='low' si blocca quando il ring-buffer è
+        pieno, forzando il generatore a procedere al ritmo della riproduzione.
         """
         if self.method == "direct" and self.stream:
             try:
                 self.stream.write(chunk.astype(np.float32))
             except Exception as e:
-                logger.error(f"Error during chunk playback: {e}")
+                logger.error(f"Errore durante la riproduzione del chunk: {e}")
 
-    # ── Async API (kept for compatibility) ───────────────────────────────────
+    # ── API asincrona (mantenuta per compatibilità) ───────────────────────────
 
     async def play_chunk(self, chunk: np.ndarray) -> None:
         """
-        Async wrapper for play_chunk_sync.
-        Prefer direct call to play_chunk_sync inside to_thread.
+        Wrapper asincrono di play_chunk_sync.
+        Preferire la chiamata diretta a play_chunk_sync dentro to_thread.
         """
         self.play_chunk_sync(chunk)
 
     async def play(self, file_path: str) -> bool:
-        """Plays a complete WAV file (compatibility fallback)."""
+        """Riproduce un file WAV intero (fallback per compatibilità)."""
         if not os.path.exists(file_path):
             logger.error(f"Audio file not found: {file_path}")
             return False
@@ -93,9 +93,9 @@ class AudioOutputService:
             return False
 
     async def stop(self):
-        """Stops the audio stream"""
+        """Ferma lo stream audio"""
         self._is_playing = False
         if self.stream:
             self.stream.stop()
             self.stream.close()
-            logger.info("Audio stream stopped.")
+            logger.info("Audio stream fermato.")
