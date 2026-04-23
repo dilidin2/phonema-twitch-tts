@@ -6,16 +6,11 @@ import asyncio
 import os
 import random
 from typing import Optional, Dict, Any, List
+
 from loguru import logger
 import numpy as np
 
 from services.audio_output import AudioOutputService
-from models.voxcpm_tts_model import VoxCPMTTSPipeline
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Voice Rotator
-# ──────────────────────────────────────────────────────────────────────────────
 
 
 class VoiceRotator:
@@ -102,11 +97,7 @@ class TTSService:
         self, config: dict, audio_service: Optional[AudioOutputService] = None
     ):
         self.config = config
-        self.output_dir = config["output"]["directory"]
-        self.format = config["output"]["format"]
         self.sample_rate = 48000  # VoxCPM2 nativo
-
-        os.makedirs(self.output_dir, exist_ok=True)
 
         self.model = None
         self.audio_service = audio_service

@@ -371,20 +371,6 @@ async def get_twitch_status():
     }
 
 
-@app.get("/output/list")
-async def list_output_files():
-    """List recently generated audio files"""
-    import glob
-
-    output_dir = CONFIG["output"]["directory"]
-    files = sorted(glob.glob(f"{output_dir}/*.wav"), reverse=True)
-
-    return {
-        "count": len(files),
-        "files": [os.path.basename(f) for f in files[:20]],  # Last 20 files
-    }
-
-
 if __name__ == "__main__":
     import uvicorn
 

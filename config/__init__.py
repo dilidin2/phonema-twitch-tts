@@ -59,19 +59,11 @@ def get_env_config() -> Dict[str, Any]:
     config["REF_AUDIO_PATH"] = os.getenv("REF_AUDIO_PATH", "config/reference_voice.wav")
     config["REF_TEXT"] = os.getenv("REF_TEXT", "Hello sample text")
 
-    # Output config
-    config["OUTPUT_DIRECTORY"] = os.getenv("OUTPUT_DIRECTORY", "output/tts_files")
-    config["AUDIO_FORMAT"] = os.getenv("AUDIO_FORMAT", "wav")
-    config["SAMPLE_RATE"] = int(os.getenv("SAMPLE_RATE", "44100"))
-
     # Server config
     config["PORT"] = int(os.getenv("PORT", "8000"))
     config["HOST"] = os.getenv("HOST", "127.0.0.1")
     config["MAX_QUEUE_SIZE"] = int(os.getenv("MAX_QUEUE_SIZE", "10"))
     config["REQUEST_TIMEOUT"] = int(os.getenv("REQUEST_TIMEOUT", "30"))
-
-    # Audio output method
-    config["AUDIO_OUTPUT_METHOD"] = os.getenv("AUDIO_OUTPUT_METHOD", "direct")
 
     return config
 
