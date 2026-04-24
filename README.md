@@ -47,7 +47,7 @@ VoxCPM2 requires PyTorch ≥ 2.5.0. Pick the build matching your hardware:
 uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu126
 ```
 
-**AMD GPU or CPU (ROCm 7.2 — recommended for AMD CPUs):**
+**AMD GPU (ROCm 7.2):**
 ```bash
 uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm7.2
 ```
