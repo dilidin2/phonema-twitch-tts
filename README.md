@@ -31,13 +31,15 @@ One worker processes inference sequentially. Producer/consumer pattern streams c
 
 ## Installation
 
-### Clone the repo
+### Clone the repo and initialize the environment
+
+If you don't have `uv` installed yet, follow [the official installation guide](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```bash
 git clone https://github.com/dilidin2/phonema-twitch-tts.git
 cd phonema-twitch-tts
 uv venv
-source .venv/bin/activate
+source .venv/bin/activate # Windows: .venv\Scripts\activate
 ```
 
 ### 1. PyTorch (critical for performance)
@@ -83,8 +85,8 @@ pip install voxcpm numpy fastapi uvicorn python-multipart twitchAPI pyyaml \
 
 Copy `.env.example` to `.env`
 
-``` bash
-cp .env.example .env
+```bash
+cp .env.example .env # Windows: rename .env.example to .env manually
 ```
 
 and fill in the values:
@@ -117,7 +119,7 @@ HOST=127.0.0.1
 Change the name of the config:
 
 ```bash
-cp config/tts_config.yaml.example config/tts_config.yaml
+cp config/tts_config.yaml.example config/tts_config.yaml # Windows: rename the file manually
 ```
 
 Preview of the config:
