@@ -51,6 +51,7 @@ uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu1
 ```bash
 uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm7.2
 ```
+
 > <small>CUDA/ROCm pytorch versions are still needed even if on cpu</small>
 
 ### 2. Project dependencies
