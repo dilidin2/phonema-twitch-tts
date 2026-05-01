@@ -5,10 +5,11 @@ TTS Service - Handles audio generation with queue management
 import asyncio
 import os
 import random
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, List, Optional
 
-from loguru import logger
 import numpy as np
+from loguru import logger
+from models.voxcpm_tts_model import VoxCPMTTSPipeline
 
 from services.audio_output import AudioOutputService
 
@@ -245,9 +246,8 @@ class TTSService:
 
                         # Flusha SOLO quando abbiamo accumulato abbastanza chunk
                         # o quando lo streaming è completato
-                        flush = (
-                            len(accumulated) >= TARGET_BUFFER_CHUNKS
-                            or (streaming_done.is_set() and audio_buffer.empty())
+                        flush = len(accumulated) >= TARGET_BUFFER_CHUNKS or (
+                            streaming_done.is_set() and audio_buffer.empty()
                         )
 
                         if flush:
@@ -277,7 +277,9 @@ class TTSService:
                         self.queue.task_done()
                     except ValueError:
                         # Should never happen, but just in case
-                        logger.warning(f"Worker {worker_id}: surplus task_done() ignored")
+                        logger.warning(
+                            f"Worker {worker_id}: surplus task_done() ignored"
+                        )
 
     async def submit_request(self, request: Dict[str, Any]) -> bool:
         if not self._is_running:

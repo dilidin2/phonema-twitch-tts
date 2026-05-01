@@ -150,14 +150,19 @@ async def lifespan(app: FastAPI):
 
     # Connect callback from TwitchService to TTSService
     async def on_redemption(data):
-        """Handle redemption events - submit to TTS queue"""
         text = data.get("user_input", "") or ""
         user_name = data.get("user_name", "A user")
+        reward_title = data.get("reward_title", "")
+
+        # Filtro per nome redemption (se configurato)
+        required_name = CONFIG.get("redemption_name", "")
+        if required_name and reward_title != required_name:
+            logger.debug(f"Redemption '{reward_title}' ignorata (attesa: '{required_name}')")
+            return
 
         if text:
             formatted_text = f"{user_name} says: {text}"
-
-            logger.info(f"  Processing redemption from {user_name}: '{formatted_text}'")
+            logger.info(f"Processing redemption from {user_name}: '{formatted_text}'")
             await tts_service.submit_request(
                 {
                     "text": formatted_text,

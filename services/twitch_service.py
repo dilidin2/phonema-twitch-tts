@@ -5,16 +5,17 @@ Handles real-time Channel Points redemption events using EventSub
 
 import asyncio
 import json
-from pathlib import Path
-from typing import Optional, Callable
-from loguru import logger
 import os
+from pathlib import Path
+from typing import Callable, Optional
+
+from loguru import logger
 
 # Import twitchAPI v4 components
 try:
-    from twitchAPI.twitch import Twitch
-    from twitchAPI.oauth import UserAuthenticator
     from twitchAPI.eventsub.websocket import EventSubWebsocket
+    from twitchAPI.oauth import UserAuthenticator
+    from twitchAPI.twitch import Twitch
     from twitchAPI.type import AuthScope
 except ImportError:
     raise ImportError("Install twitchAPI: pip install 'twitchAPI>=4.5.0'")
@@ -84,14 +85,22 @@ class TwitchService:
                 )
                 logger.info("✓ Tokens loaded from token.json")
             except Exception as e:
-                logger.warning(f"Failed to load tokens ({e}) — falling back to browser auth")
+                logger.warning(
+                    f"Failed to load tokens ({e}) — falling back to browser auth"
+                )
                 token, refresh_token = await self._do_browser_auth()
-                await self.twitch.set_user_authentication(token, REQUIRED_SCOPES, refresh_token)
+                await self.twitch.set_user_authentication(
+                    token, REQUIRED_SCOPES, refresh_token
+                )
                 _save_tokens(token, refresh_token)
         else:
-            logger.info("No token.json found — opening browser for first-time authentication...")
+            logger.info(
+                "No token.json found — opening browser for first-time authentication..."
+            )
             token, refresh_token = await self._do_browser_auth()
-            await self.twitch.set_user_authentication(token, REQUIRED_SCOPES, refresh_token)
+            await self.twitch.set_user_authentication(
+                token, REQUIRED_SCOPES, refresh_token
+            )
             _save_tokens(token, refresh_token)
 
         logger.info("Twitch client initialized")
@@ -132,8 +141,13 @@ class TwitchService:
 
         except Exception as e:
             error_str = str(e)
-            if any(k in error_str for k in ("401", "Unauthorized", "needs user authentication")):
-                logger.warning("Auth error during EventSub subscribe — re-authenticating...")
+            if any(
+                k in error_str
+                for k in ("401", "Unauthorized", "needs user authentication")
+            ):
+                logger.warning(
+                    "Auth error during EventSub subscribe — re-authenticating..."
+                )
                 await self.reauthenticate_if_needed()
                 # EventSub was already started; just re-subscribe.
                 await _subscribe()
@@ -149,10 +163,9 @@ class TwitchService:
             user_input = data.event.user_input
             user_id = data.event.user_id
             user_name = data.event.user_name or "Someone"
+            reward_title = data.event.reward.title
 
-            logger.info(
-                f"💰 Redemption from {user_name} ({user_id}): '{user_input}'"
-            )
+            logger.info(f"💰 Redemption from {user_name} ({user_id}): '{user_input}'")
 
             if self.on_redemption:
                 await self.on_redemption(
@@ -160,6 +173,7 @@ class TwitchService:
                         "user_input": user_input,
                         "user_id": user_id,
                         "user_name": user_name,
+                        "reward_title": reward_title,
                     }
                 )
 
@@ -185,7 +199,7 @@ class TwitchService:
                 await self.authenticate_user()
                 return True
             except Exception as e:
-                wait_time = 2 ** attempt
+                wait_time = 2**attempt
                 logger.warning(
                     f"Reconnection attempt {attempt + 1}/{max_retries} failed: {e}. "
                     f"Retrying in {wait_time}s..."

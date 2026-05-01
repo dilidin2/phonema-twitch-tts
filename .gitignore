@@ -5,6 +5,7 @@ __pycache__/
 *.so
 .Python
 venv/
+.venv/
 env/
 ENV/
 
@@ -13,8 +14,6 @@ ENV/
 .env.local
 
 # Output files
-output/
-output/*
 *.wav
 *.mp3
 
@@ -58,3 +57,5 @@ dist/
 
 # Ruff
 .ruff_cache/
+
+config/tts_config.yaml

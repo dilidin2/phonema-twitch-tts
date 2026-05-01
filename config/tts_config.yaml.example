@@ -11,6 +11,8 @@ model:
 
   ref_audio_path: "config/reference_voice.wav" # Change this to the actual name of the audio
 
+redemption_name: "TTS" # Change with the name of your redemption
+
 voice_rotation:
   mode: "random"
   voices_dir: "config/voices"
