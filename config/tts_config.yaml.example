@@ -1,10 +1,10 @@
 model:
   pretrained_path: "openbmb/VoxCPM2" # HuggingFace model ID
-  force_cpu: true # Force CPU even if CUDA is available
+  force_cpu: false # Force CPU even if CUDA is available
   dtype: "bfloat16"
   inference_timesteps: 5
   language: "it"
-  num_threads_cpu: 2 # CPU threads for inference (used only on CPU)
+  num_threads_cpu: 8 # CPU threads for inference (used only on CPU)
 
   # VoxCPM2 native sample rate
   sr: 48000
