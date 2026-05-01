@@ -11,6 +11,8 @@ import os
 import re
 import numpy as np
 import soundfile as sf
+import torch
+import torch.nn.functional as F
 from typing import Tuple, Optional, Generator, List, Dict
 from loguru import logger
 
@@ -25,6 +27,7 @@ def _ensure_voxcpm_installed():
             "Requisiti: Python ≥ 3.10, PyTorch ≥ 2.5.0 (con o senza CUDA)"
         )
 
+
 def _patch_sdpa_for_cpu():
     """
     Workaround per bug VoxCPM2 su CPU.
@@ -37,9 +40,6 @@ def _patch_sdpa_for_cpu():
     Questo patch porta i tensori a 4D prima della chiamata e rimuove le
     dimensioni aggiunte dall'output, senza alterare i valori.
     """
-    import torch
-    import torch.nn.functional as F
-
     if getattr(F, "_voxcpm_sdpa_patched", False):
         return  # già applicato, evita doppio wrapping
 
@@ -97,87 +97,99 @@ def _patch_sdpa_for_cpu():
                 out = out.squeeze(0)
         return out
 
+    # Patch globale — quando voxcpm importerà torch.nn.functional prenderà questa
     F.scaled_dot_product_attention = _safe_sdpa
     torch.nn.functional.scaled_dot_product_attention = _safe_sdpa
+
+    # Patch sui riferimenti interni di voxcpm se già caricati/disponibili
+    try:
+        import voxcpm.core as vc
+        if hasattr(vc, "F") and hasattr(vc.F, "scaled_dot_product_attention"):
+            vc.F.scaled_dot_product_attention = _safe_sdpa
+        if hasattr(vc, "scaled_dot_product_attention"):
+            vc._orig_sdpa = vc.scaled_dot_product_attention
+            vc.scaled_dot_product_attention = _safe_sdpa
+    except Exception:
+        pass
+
     F._voxcpm_sdpa_patched = True
 
+
+def _unpatch_sdpa_for_cpu():
+    """Non fare nulla: la patch deve restare attiva per tutta l'inferenza."""
+    pass
 
 
 class VoxCPMTTSPipeline:
     """VoxCPM2 streaming pipeline wrapper con voice cloning (CPU/GPU)."""
 
-    MAX_CHUNK_CHARS: int = 400  # VoxCPM gestisce testi più lunghi di XTTS
+    MAX_CHUNK_CHARS: int = 400
     CHUNK_SILENCE_SEC: float = 0.1
 
     def __init__(self, config: dict):
         self.config = config
         model_cfg = config["model"]
 
-        # Determina dispositivo (GPU se disponibile, altrimenti CPU)
-        import torch
-
-        # Priority: config override > CUDA availability > CPU fallback
+        # Determina dispositivo
         force_cpu = (
-            self.config["model"].get("force_cpu", False)
-            or self.config["model"].get("device") == "cpu"
+            model_cfg.get("force_cpu", False)
+            or model_cfg.get("device") == "cpu"
         )
 
         if force_cpu:
             self.device = "cpu"
             logger.info("CPU forced via config")
-
-            # Nascondi completamente le GPU da PyTorch
-            import os
-
             if not os.environ.get("CUDA_VISIBLE_DEVICES"):
                 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
                 logger.info("Nascosto CUDA_VISIBLE_DEVICES=-1 per forzare CPU")
         elif torch.cuda.is_available():
             self.device = "cuda"
-            logger.info(f"CUDA available - using GPU")
+            logger.info("CUDA available - using GPU")
         else:
             self.device = "cpu"
             logger.info("No CUDA available - using CPU")
 
-        # Imposta numero thread PyTorch per CPU
-        if self.device == "cpu":
-            logger.info("⚡ Applicazione Patch SDPA per stabilità su CPU...")
-            _patch_sdpa_for_cpu()
-            num_threads = model_cfg.get("num_threads_cpu", 4)
-            torch.set_num_threads(num_threads)
-            torch.set_num_interop_threads(num_threads)
-            logger.info(f"CPU threads: {num_threads}")
-
         self.sr = 48000  # VoxCPM2 nativo (48kHz)
 
-        # Carica modello da HuggingFace (o path locale)
         model_path = model_cfg.get("pretrained_path", "openbmb/VoxCPM2")
         dtype_str = model_cfg.get("dtype", "float32")
-        self.dtype = torch.float32 if dtype_str == "float32" else torch.float16
+        dtype_map = {
+            "float32": torch.float32,
+            "float16": torch.float16,
+            "bfloat16": torch.bfloat16,
+        }
+        self.dtype = dtype_map.get(dtype_str, torch.float32)
 
         logger.info(f"Loading VoxCPM2 from {model_path} on {self.device.upper()}...")
         logger.info(f"  Device: {self.device} | Dtype: {dtype_str}")
 
         _ensure_voxcpm_installed()
 
-        # Patch voxcpm per disabilitare warm-up generation su CPU
         if self.device == "cpu":
-            import torch.nn.functional as F
-            import voxcpm.core
+            logger.info("⚡ Applicazione Patch SDPA per stabilità su CPU...")
+            _patch_sdpa_for_cpu()
+            num_threads = model_cfg.get("num_threads_cpu", 4)
+            torch.set_num_threads(num_threads)
+            logger.info(f"CPU threads: {num_threads}")
 
-            # Disabilita il warm-up generation durante l'inizializzazione
-            orig_init = voxcpm.core.VoxCPM.__init__
-
-            def _patched_init(self, *args, **kwargs):
-                kwargs["optimize"] = False  # Disable torch.compile per evitare warning
-                orig_init(self, *args, **kwargs)
-
-            voxcpm.core.VoxCPM.__init__ = _patched_init
+        if self.device == "cpu":
+            torch.cuda.is_available = lambda: False
+            torch.cuda.device_count = lambda: 0
+            logger.info("  Monkey-patched torch.cuda → forced CPU visibility")
 
         from voxcpm import VoxCPM
 
-        # Carica modello (load_denoiser=False per velocità)
-        self.model = VoxCPM.from_pretrained(model_path, load_denoiser=False, optimize=False)
+        self.model = VoxCPM.from_pretrained(
+            model_path,
+            load_denoiser=False,
+            optimize=False,
+        )
+
+        if self.device == "cpu" and self.dtype == torch.bfloat16:
+            logger.warning(
+                "  ⚠️  bfloat16 on CPU can cause illegal instruction errors. "
+                "Change model.dtype to 'float32' in config if needed."
+            )
 
         logger.info(
             f"VoxCPM2 loaded! sr={self.sr} Hz | max_chunk={self.MAX_CHUNK_CHARS} chars"
@@ -237,7 +249,14 @@ class VoxCPMTTSPipeline:
                 current = sentence
 
         if current:
-            chunks.append(current.strip())
+            while len(current) > self.MAX_CHUNK_CHARS:
+                split_at = current.rfind(" ", 0, self.MAX_CHUNK_CHARS)
+                if split_at == -1:
+                    split_at = self.MAX_CHUNK_CHARS
+                chunks.append(current[:split_at].strip())
+                current = current[split_at:].strip()
+            if current:
+                chunks.append(current.strip())
 
         chunks = [c for c in chunks if c]
         logger.debug(f"Text split into {len(chunks)} chunks")
@@ -292,7 +311,7 @@ class VoxCPMTTSPipeline:
                     yield audio_piece.astype(np.float32), self.sr
 
             if idx < n:
-                yield silence
+                yield silence, self.sr
 
     def generate_chunked(
         self,
@@ -342,7 +361,7 @@ class VoxCPMTTSPipeline:
         speed: float = 1.0,
         inference_timesteps: Optional[int] = None,
     ) -> Generator[np.ndarray, None, None]:
-        """Generatore realtime per playback immediato (language ignorata - auto-detect)."""
+        """Generatore realtime per playback immediato."""
         if not ref_audio:
             ref_audio = self.config["model"].get("ref_audio_path")
 
@@ -352,8 +371,10 @@ class VoxCPMTTSPipeline:
         if inference_timesteps is None:
             inference_timesteps = self.config["model"].get("inference_timesteps", 1)
 
-        logger.info(f"Streaming VoxCPM2 | voice: {os.path.basename(ref_audio)} | steps: {inference_timesteps}")
-
+        logger.info(
+            f"Streaming VoxCPM2 | voice: {os.path.basename(ref_audio)} | "
+            f"steps: {inference_timesteps}"
+        )
         logger.info(f"Streaming TTS started for: {text[:30]}...")
 
         latents = self._get_latents(ref_audio)
@@ -364,7 +385,9 @@ class VoxCPMTTSPipeline:
         logger.info(f"Streaming VoxCPM2 | voice: {os.path.basename(ref_audio)}")
 
         for idx, chunk in enumerate(chunks, start=1):
-            for audio_piece in self._infer_chunk_stream(chunk, ref_audio, speed, inference_timesteps):
+            for audio_piece in self._infer_chunk_stream(
+                chunk, ref_audio, speed, inference_timesteps
+            ):
                 if audio_piece is not None and len(audio_piece) > 0:
                     yield audio_piece.astype(np.float32)
 

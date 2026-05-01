@@ -41,6 +41,7 @@ class TwitchService:
         self.twitch: Optional[Twitch] = None
         self.eventsub: Optional[EventSubWebsocket] = None
         self.on_redemption: Optional[Callable] = None
+        self._broadcaster_id: Optional[str] = None
 
     # ── Auth helpers ──────────────────────────────────────────────────────────
 
@@ -123,6 +124,8 @@ class TwitchService:
         if not self.eventsub:
             raise RuntimeError("Call authenticate_user() first to create EventSub")
 
+        self._broadcaster_id = broadcaster_id  # Store for reconnect
+
         # Define the callback BEFORE starting, so it's always in scope.
         async def redemption_callback(data):
             await self._handle_redemption(data)
@@ -149,7 +152,9 @@ class TwitchService:
                     "Auth error during EventSub subscribe — re-authenticating..."
                 )
                 await self.reauthenticate_if_needed()
-                # EventSub was already started; just re-subscribe.
+                # Re-create EventSub with fresh auth state
+                self.eventsub = EventSubWebsocket(twitch=self.twitch)
+                self.eventsub.start()
                 await _subscribe()
                 logger.info("✓ Re-subscribed after re-authentication")
             else:
@@ -178,7 +183,7 @@ class TwitchService:
                 )
 
         except Exception as e:
-            logger.error(f"Error handling redemption: {e}")
+            logger.error(f"Redemption handler failed (user {user_name}): {e}", exc_info=True)
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -197,6 +202,8 @@ class TwitchService:
             try:
                 await self.connect()
                 await self.authenticate_user()
+                if self._broadcaster_id:
+                    await self.listen_channel_points_redemption(self._broadcaster_id)
                 return True
             except Exception as e:
                 wait_time = 2**attempt

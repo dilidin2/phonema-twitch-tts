@@ -144,6 +144,8 @@ async def lifespan(app: FastAPI):
 
     logger.info("  ✓ All services initialized")
 
+    app.state.cuda_available = cuda_available
+    app.state.cuda_devices = len(valid_gpus) if 'valid_gpus' in dir() else 0
     app.state.audio_service = audio_service
     app.state.tts_service = tts_service
     app.state.twitch_service = twitch_service
@@ -207,9 +209,9 @@ app.add_middleware(
 async def health_check():
     """Health check endpoint"""
     try:
-        import torch
-
-        cuda_available = torch.cuda.is_available()
+        # Get validated CUDA state from lifespan (not raw torch.cuda.is_available())
+        cuda_available = getattr(app.state, "cuda_available", False)
+        cuda_devices = getattr(app.state, "cuda_devices", 0)
 
         # Get queue status safely
         queue_size = 0
@@ -221,7 +223,7 @@ async def health_check():
         return HealthResponse(
             status="ok" if cuda_available else "degraded",
             cuda_available=cuda_available,
-            cuda_devices=torch.cuda.device_count(),
+            cuda_devices=cuda_devices,
             queue_size=queue_size,
             workers_active=workers_active,
         )
