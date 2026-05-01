@@ -67,6 +67,8 @@ class VoiceRotator:
 
     def next(self) -> str:
         if len(self.voices) == 1:
+            if not os.path.exists(self.voices[0]):
+                raise FileNotFoundError(f"Voice file missing: {self.voices[0]}")
             return self.voices[0]
 
         if self.mode == "random":
@@ -78,6 +80,9 @@ class VoiceRotator:
             self._index = (self._index + 1) % len(self.voices)
 
         chosen = self.voices[idx]
+        if not os.path.exists(chosen):
+            logger.error(f"Voice file not found at runtime: {chosen}")
+            raise FileNotFoundError(chosen)
         logger.debug(f"VoiceRotator → {os.path.basename(chosen)}")
         return chosen
 
@@ -131,8 +136,20 @@ class TTSService:
     async def stop_workers(self):
         self._is_running = False
 
+        # Signal shutdown via sentinel first
+        for _ in self.worker_tasks:
+            try:
+                await self.queue.put(None)  # Sentinel per worker
+            except asyncio.QueueFull:
+                pass
+
+        # Wait for graceful exit before forcing cancel
         for task in self.worker_tasks:
-            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=5.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                task.cancel()
+
         await asyncio.gather(*self.worker_tasks, return_exceptions=True)
 
         logger.info("TTS workers stopped")
@@ -148,6 +165,10 @@ class TTSService:
             _got_request = False
             try:
                 request = await self.queue.get()
+
+                if request is None:  # Shutdown sentinel
+                    break
+
                 _got_request = True
 
                 text = request.get("text", "")
@@ -211,7 +232,8 @@ class TTSService:
 
                     except Exception as e:
                         logger.error(f"Producer error: {e}")
-                        raise
+                        streaming_done.set()  # Signal consumer to flush and exit
+                        return  # Don't re-raise — let gather complete normally
                     finally:
                         streaming_done.set()
 
@@ -260,6 +282,7 @@ class TTSService:
 
                 # Runs producer and consumer in parallel
                 await asyncio.gather(producer(), consumer())
+                await audio_buffer.join()  # Ensure all items processed
 
                 logger.success(
                     f"Worker {worker_id}: streaming completato "
@@ -282,8 +305,8 @@ class TTSService:
                         )
 
     async def submit_request(self, request: Dict[str, Any]) -> bool:
-        if not self._is_running:
-            logger.error("TTS service not running!")
+        if not self._is_running or not self.worker_tasks:
+            logger.error("TTS service not running or no workers!")
             return False
 
         try:

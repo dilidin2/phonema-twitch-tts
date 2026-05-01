@@ -25,37 +25,21 @@ def _ensure_voxcpm_installed():
             "Requisiti: Python ≥ 3.10, PyTorch ≥ 2.5.0 (con o senza CUDA)"
         )
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Patch SDPA — deve avvenire PRIMA di qualsiasi import di voxcpm
+# ═══════════════════════════════════════════════════════════════════════════════
+_sdpa_patched = False
+
 def _patch_sdpa_for_cpu():
-    """
-    Workaround per bug VoxCPM2 su CPU.
+    global _sdpa_patched
+    if _sdpa_patched:
+        return
 
-    Durante forward_step (decoding autoregressivo token-by-token) i tensori
-    Q/K/V possono essere ridotti a 1-2D per un squeeze non intenzionale nel
-    codice VoxCPM. scaled_dot_product_attention richiede almeno 4D
-    [batch, heads, seq, head_dim] → IndexError: Dimension out of range.
-
-    Questo patch porta i tensori a 4D prima della chiamata e rimuove le
-    dimensioni aggiunte dall'output, senza alterare i valori.
-    """
-    import torch
     import torch.nn.functional as F
+    _orig = F.scaled_dot_product_attention
 
-    if getattr(F, "_voxcpm_sdpa_patched", False):
-        return  # già applicato, evita doppio wrapping
-
-    _orig_sdpa = F.scaled_dot_product_attention
-
-    def _safe_sdpa(
-        query,
-        key,
-        value,
-        attn_mask=None,
-        dropout_p=0.0,
-        is_causal=False,
-        scale=None,
-        enable_gqa=None,
-        **kwargs,
-    ):
+    def _safe_sdpa(query, key, value, attn_mask=None, dropout_p=0.0,
+                   is_causal=False, scale=None, enable_gqa=None, **kwargs):
         q_dim = query.dim()
         k_dim = key.dim()
         v_dim = value.dim()
@@ -64,7 +48,6 @@ def _patch_sdpa_for_cpu():
         missing_k = max(0, 4 - k_dim)
         missing_v = max(0, 4 - v_dim)
 
-        # Aggiungi dimensioni mancanti
         if missing_q:
             for _ in range(missing_q):
                 query = query.unsqueeze(0)
@@ -79,27 +62,49 @@ def _patch_sdpa_for_cpu():
             for _ in range(mask_missing):
                 attn_mask = attn_mask.unsqueeze(0)
 
-        out = _orig_sdpa(
-            query,
-            key,
-            value,
-            attn_mask=attn_mask,
-            dropout_p=dropout_p,
-            is_causal=is_causal,
-            scale=scale,
-            enable_gqa=enable_gqa,
-            **kwargs,
-        )
+        out = _orig(query, key, value, attn_mask=attn_mask,
+                    dropout_p=dropout_p, is_causal=is_causal,
+                    scale=scale, enable_gqa=enable_gqa, **kwargs)
 
-        # Rimuovi dimensioni aggiunte dall'output
         if missing_q:
             for _ in range(missing_q):
                 out = out.squeeze(0)
         return out
 
+    # Patch sul modulo F
     F.scaled_dot_product_attention = _safe_sdpa
-    torch.nn.functional.scaled_dot_product_attention = _safe_sdpa
-    F._voxcpm_sdpa_patched = True
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # PATCH AGGRESSIVA: aggiorna anche i riferimenti già catturati nei moduli
+    # importati da voxcpm (from torch.nn.functional import scaled_dot_product_attention)
+    # ═══════════════════════════════════════════════════════════════════════════
+    import sys
+    for mod_name, mod in list(sys.modules.items()):
+        if mod is None:
+            continue
+        # Caso 1: il modulo ha importato direttamente la funzione
+        if hasattr(mod, "scaled_dot_product_attention"):
+            try:
+                if mod.scaled_dot_product_attention is _orig:
+                    mod.scaled_dot_product_attention = _safe_sdpa
+            except Exception:
+                pass
+        # Caso 2: il modulo ha un alias F = torch.nn.functional
+        if hasattr(mod, "F") and hasattr(mod.F, "scaled_dot_product_attention"):
+            try:
+                if mod.F.scaled_dot_product_attention is _orig:
+                    mod.F.scaled_dot_product_attention = _safe_sdpa
+            except Exception:
+                pass
+
+    _sdpa_patched = True
+    logger.debug("SDPA patched aggressively for CPU stability")
+
+
+# ── Rimuovi _unpatch_sdpa_for_cpu() o lasciala vuota ─────────────────────────
+def _unpatch_sdpa_for_cpu():
+    """Non fare nulla: la patch deve restare attiva per tutta l'inferenza."""
+    pass
 
 
 
@@ -145,6 +150,35 @@ class VoxCPMTTSPipeline:
             _patch_sdpa_for_cpu()
             num_threads = model_cfg.get("num_threads_cpu", 4)
             torch.set_num_threads(num_threads)
+            logger.info(f"CPU threads: {num_threads}")
+
+        self.sr = 48000  # VoxCPM2 nativo (48kHz)
+
+        # Carica modello da HuggingFace (o path locale)
+        model_path = model_cfg.get("pretrained_path", "openbmb/VoxCPM2")
+        dtype_str = model_cfg.get("dtype", "float32")
+        dtype_map = {
+            "float32": torch.float32,
+            "float16": torch.float16,
+            "bfloat16": torch.bfloat16,
+        }
+        self.dtype = dtype_map.get(dtype_str, torch.float32)
+
+        logger.info(f"Loading VoxCPM2 from {model_path} on {self.device.upper()}...")
+        logger.info(f"  Device: {self.device} | Dtype: {dtype_str}")
+
+        _ensure_voxcpm_installed()
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # CPU FORCE: VoxCPM2 guarda torch.cuda.is_available() per decidere.
+        # Dobbiamo ingannarlo perché torch è già importato nel processo.
+        # ═══════════════════════════════════════════════════════════════════════
+        # Imposta numero thread PyTorch per CPU
+        if self.device == "cpu":
+            logger.info("⚡ Applicazione Patch SDPA per stabilità su CPU...")
+            _patch_sdpa_for_cpu()  # <-- PRIMA di importare voxcpm!
+            num_threads = model_cfg.get("num_threads_cpu", 4)
+            torch.set_num_threads(num_threads)
             torch.set_num_interop_threads(num_threads)
             logger.info(f"CPU threads: {num_threads}")
 
@@ -153,31 +187,59 @@ class VoxCPMTTSPipeline:
         # Carica modello da HuggingFace (o path locale)
         model_path = model_cfg.get("pretrained_path", "openbmb/VoxCPM2")
         dtype_str = model_cfg.get("dtype", "float32")
-        self.dtype = torch.float32 if dtype_str == "float32" else torch.float16
+        dtype_map = {
+            "float32": torch.float32,
+            "float16": torch.float16,
+            "bfloat16": torch.bfloat16,
+        }
+        self.dtype = dtype_map.get(dtype_str, torch.float32)
 
         logger.info(f"Loading VoxCPM2 from {model_path} on {self.device.upper()}...")
         logger.info(f"  Device: {self.device} | Dtype: {dtype_str}")
 
         _ensure_voxcpm_installed()
 
-        # Patch voxcpm per disabilitare warm-up generation su CPU
+        # Monkey-patch torch.cuda per forzare CPU (VoxCPM2 ignora il nostro device)
+        # Imposta numero thread PyTorch per CPU
         if self.device == "cpu":
-            import torch.nn.functional as F
-            import voxcpm.core
+            logger.info("⚡ Applicazione Patch SDPA per stabilità su CPU...")
+            _patch_sdpa_for_cpu()
+            num_threads = model_cfg.get("num_threads_cpu", 4)
+            torch.set_num_threads(num_threads)
+            logger.info(f"CPU threads: {num_threads}")
 
-            # Disabilita il warm-up generation durante l'inizializzazione
-            orig_init = voxcpm.core.VoxCPM.__init__
+        self.sr = 48000
 
-            def _patched_init(self, *args, **kwargs):
-                kwargs["optimize"] = False  # Disable torch.compile per evitare warning
-                orig_init(self, *args, **kwargs)
+        model_path = model_cfg.get("pretrained_path", "openbmb/VoxCPM2")
+        dtype_str = model_cfg.get("dtype", "float32")
+        dtype_map = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}
+        self.dtype = dtype_map.get(dtype_str, torch.float32)
 
-            voxcpm.core.VoxCPM.__init__ = _patched_init
+        logger.info(f"Loading VoxCPM2 from {model_path} on {self.device.upper()}...")
+        logger.info(f"  Device: {self.device} | Dtype: {dtype_str}")
 
+        # Monkey-patch torch.cuda PRIMA di importare voxcpm
+        if self.device == "cpu":
+            torch.cuda.is_available = lambda: False
+            torch.cuda.device_count = lambda: 0
+            logger.info("  Monkey-patched torch.cuda → forced CPU visibility")
+
+        # Importa voxcpm DOPO la patch SDPA
         from voxcpm import VoxCPM
 
-        # Carica modello (load_denoiser=False per velocità)
-        self.model = VoxCPM.from_pretrained(model_path, load_denoiser=False, optimize=False)
+        # Passa device="cpu" esplicitamente (documentato nella FAQ ufficiale)
+        self.model = VoxCPM.from_pretrained(
+            model_path,
+            device=self.device,      # ← AGGIUNGI QUESTO
+            load_denoiser=False,
+            optimize=False,
+        )
+
+        if self.device == "cpu" and self.dtype == torch.bfloat16:
+            logger.warning(
+                "  ⚠️  bfloat16 on CPU can cause illegal instruction errors. "
+                "Change model.dtype to 'float32' in config if needed."
+            )
 
         logger.info(
             f"VoxCPM2 loaded! sr={self.sr} Hz | max_chunk={self.MAX_CHUNK_CHARS} chars"
@@ -237,7 +299,14 @@ class VoxCPMTTSPipeline:
                 current = sentence
 
         if current:
-            chunks.append(current.strip())
+            while len(current) > self.MAX_CHUNK_CHARS:
+                split_at = current.rfind(" ", 0, self.MAX_CHUNK_CHARS)
+                if split_at == -1:
+                    split_at = self.MAX_CHUNK_CHARS
+                chunks.append(current[:split_at].strip())
+                current = current[split_at:].strip()
+            if current:
+                chunks.append(current.strip())
 
         chunks = [c for c in chunks if c]
         logger.debug(f"Text split into {len(chunks)} chunks")
@@ -250,7 +319,11 @@ class VoxCPMTTSPipeline:
         speed: float = 1.0,
         inference_timesteps: int = 4,
     ) -> Generator[np.ndarray, None, None]:
-        """Genera audio per un singolo chunk con streaming."""
+        """Genera audio per un singolo chunk con streaming.
+
+        Yields raw np.ndarray (no sample rate tuple).
+        Used by generate_realtime_stream (raw arrays) and stream_voice_clone (wraps in tuple).
+        """
         try:
             for chunk in self.model.generate_streaming(
                 text=text,
@@ -292,7 +365,7 @@ class VoxCPMTTSPipeline:
                     yield audio_piece.astype(np.float32), self.sr
 
             if idx < n:
-                yield silence
+                yield silence, self.sr
 
     def generate_chunked(
         self,

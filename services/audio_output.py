@@ -66,6 +66,13 @@ class AudioOutputService:
                 self.stream.write(chunk.astype(np.float32))
             except Exception as e:
                 logger.error(f"Error during chunk playback: {e}")
+                # Attempt to recover
+                if not self.stream.active:
+                    logger.warning("Audio stream inactive — attempting restart")
+                    try:
+                        self.stream.start()
+                    except Exception:
+                        logger.error("Failed to restart audio stream")
 
     # ── API asincrona (mantenuta per compatibilità) ───────────────────────────
 
