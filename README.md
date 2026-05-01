@@ -54,7 +54,7 @@ uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu1
 uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm7.2
 ```
 
-> <small>CUDA/ROCm pytorch versions are still needed even if on cpu</small>
+> <small>The CUDA/ROCm pytorch versions are still needed even if on CPU</small>
 
 ### 2. Project dependencies
 
@@ -114,10 +114,10 @@ HOST=127.0.0.1
 
 ### Model Config (`config/tts_config.yaml`)
 
-Change the nome of the config:
+Change the name of the config:
 
 ```bash
-cp config/tts_config.yaml.exemple config/tts_config.yaml
+cp config/tts_config.yaml.example config/tts_config.yaml
 ```
 
 Preview of the config:
