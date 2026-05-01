@@ -36,6 +36,8 @@ One worker processes inference sequentially. Producer/consumer pattern streams c
 ```bash
 git clone https://github.com/dilidin2/phonema-twitch-tts.git
 cd phonema-twitch-tts
+uv venv
+source .venv/bin/activate
 ```
 
 ### 1. PyTorch (critical for performance)
