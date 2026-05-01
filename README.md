@@ -108,21 +108,39 @@ HOST=127.0.0.1
 
 ### Model Config (`config/tts_config.yaml`)
 
+```bash
+cp config/tts_config.yaml.exemple config/tts_config.yaml
+```
+
 ```yaml
 model:
-  pretrained_path: "openbmb/VoxCPM2"   # HuggingFace model ID or local path
-  force_cpu: true                       # Set false if using GPU
-  dtype: "bfloat16"                     # bfloat16 / float32
-  inference_timesteps: 5                # Higher = better quality, slower
-  sr: 48000                             # VoxCPM2 native sample rate
-  ref_audio_path: "config/reference_voice.wav"
+  pretrained_path: "openbmb/VoxCPM2" # HuggingFace model ID
+  force_cpu: true # Force CPU even if CUDA is available
+  dtype: "bfloat16"
+  inference_timesteps: 5
+  language: "it"
+  num_threads_cpu: 2 # CPU threads for inference (used only on CPU)
+
+  # VoxCPM2 native sample rate
+  sr: 48000
+
+  ref_audio_path: "config/reference_voice.wav" # Change this to the actual name of the audio
+
+redemption_name: "TTS" # Change with the name of your redemption
 
 voice_rotation:
-  mode: "random"                        # "random" | "sequential" | "disabled"
+  mode: "random"
   voices_dir: "config/voices"
   voices:
-    - "voice_a.wav"
+    - "voice_a.wav" # Add or remove voices as needed (and change the names to match your actual audio files)
     - "voice_b.wav"
+    - "voice_c.wav"
+
+max_input_chars: 500
+
+queue:
+  max_size: 10
+  timeout: 30
 ```
 
 ### Setup Voice Files
