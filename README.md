@@ -15,7 +15,7 @@ Real-time Text-to-Speech service for Twitch using **VoxCPM2**. Listens to channe
 - **Voice rotation** — Cycle through multiple voices (random or sequential mode)
 - **Queue management** — Back-pressure controlled concurrent request handling
 - **Auto-reconnect** — OAuth tokens persisted to `token.json` for seamless resumption
-- **Cross-platform** — CPU, CUDA (NVIDIA), and ROCm (AMD) supported
+- **Cross-platform** — CPU(Bad performance), CUDA (NVIDIA), and ROCm (AMD) supported
 
 ## Architecture
 
@@ -56,12 +56,17 @@ uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu1
 uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm7.2
 ```
 
-> <small>The CUDA/ROCm pytorch versions are still needed even if on CPU</small>
+**CPU:**
+```bash
+uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+```
+
+> <small>I do not suggest using CPU due to lack of quantization support of the original VoxCPM model</small>
 
 ### 2. Project dependencies
 
 ```bash
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 # or manually:
 pip install voxcpm numpy fastapi uvicorn python-multipart twitchAPI pyyaml \
            python-dotenv loguru sounddevice soundfile
@@ -102,16 +107,6 @@ TWITCH_BOT_USERNAME=your_bot_username
 # Numeric broadcaster ID (your channel's user ID, not username)
 # Get it: https://www.streamweasels.com/tools/convert-twitch-username-to-user-id/
 TWITCH_BROADCASTER_ID=123456789
-
-# Server
-PORT=8100
-HOST=127.0.0.1
-
-# Optional: override model path for custom VoxCPM2 deployment
-# TTS_MODEL_PATH=/path/to/local/model
-
-# Optional: force CPU even if GPU is available
-# TTS_DEVICE=cpu
 ```
 
 ### Model Config (`config/tts_config.yaml`)
@@ -127,11 +122,11 @@ Preview of the config:
 ```yaml
 model:
   pretrained_path: "openbmb/VoxCPM2" # HuggingFace model ID
-  force_cpu: true # Force CPU even if CUDA is available
+  force_cpu: false # Force CPU even if CUDA is available
   dtype: "bfloat16"
   inference_timesteps: 5
   language: "it"
-  num_threads_cpu: 2 # CPU threads for inference (used only on CPU)
+  num_threads_cpu: 8 # CPU threads for inference (used only on CPU)
 
   # VoxCPM2 native sample rate
   sr: 48000
