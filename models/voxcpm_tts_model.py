@@ -11,6 +11,8 @@ import os
 import re
 import numpy as np
 import soundfile as sf
+import torch
+import torch.nn.functional as F
 from typing import Tuple, Optional, Generator, List, Dict
 from loguru import logger
 
@@ -25,21 +27,35 @@ def _ensure_voxcpm_installed():
             "Requisiti: Python ≥ 3.10, PyTorch ≥ 2.5.0 (con o senza CUDA)"
         )
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Patch SDPA — deve avvenire PRIMA di qualsiasi import di voxcpm
-# ═══════════════════════════════════════════════════════════════════════════════
-_sdpa_patched = False
 
 def _patch_sdpa_for_cpu():
-    global _sdpa_patched
-    if _sdpa_patched:
-        return
+    """
+    Workaround per bug VoxCPM2 su CPU.
 
-    import torch.nn.functional as F
-    _orig = F.scaled_dot_product_attention
+    Durante forward_step (decoding autoregressivo token-by-token) i tensori
+    Q/K/V possono essere ridotti a 1-2D per un squeeze non intenzionale nel
+    codice VoxCPM. scaled_dot_product_attention richiede almeno 4D
+    [batch, heads, seq, head_dim] → IndexError: Dimension out of range.
 
-    def _safe_sdpa(query, key, value, attn_mask=None, dropout_p=0.0,
-                   is_causal=False, scale=None, enable_gqa=None, **kwargs):
+    Questo patch porta i tensori a 4D prima della chiamata e rimuove le
+    dimensioni aggiunte dall'output, senza alterare i valori.
+    """
+    if getattr(F, "_voxcpm_sdpa_patched", False):
+        return  # già applicato, evita doppio wrapping
+
+    _orig_sdpa = F.scaled_dot_product_attention
+
+    def _safe_sdpa(
+        query,
+        key,
+        value,
+        attn_mask=None,
+        dropout_p=0.0,
+        is_causal=False,
+        scale=None,
+        enable_gqa=None,
+        **kwargs,
+    ):
         q_dim = query.dim()
         k_dim = key.dim()
         v_dim = value.dim()
@@ -48,6 +64,7 @@ def _patch_sdpa_for_cpu():
         missing_k = max(0, 4 - k_dim)
         missing_v = max(0, 4 - v_dim)
 
+        # Aggiungi dimensioni mancanti
         if missing_q:
             for _ in range(missing_q):
                 query = query.unsqueeze(0)
@@ -62,99 +79,78 @@ def _patch_sdpa_for_cpu():
             for _ in range(mask_missing):
                 attn_mask = attn_mask.unsqueeze(0)
 
-        out = _orig(query, key, value, attn_mask=attn_mask,
-                    dropout_p=dropout_p, is_causal=is_causal,
-                    scale=scale, enable_gqa=enable_gqa, **kwargs)
+        out = _orig_sdpa(
+            query,
+            key,
+            value,
+            attn_mask=attn_mask,
+            dropout_p=dropout_p,
+            is_causal=is_causal,
+            scale=scale,
+            enable_gqa=enable_gqa,
+            **kwargs,
+        )
 
+        # Rimuovi dimensioni aggiunte dall'output
         if missing_q:
             for _ in range(missing_q):
                 out = out.squeeze(0)
         return out
 
-    # Patch sul modulo F
+    # Patch globale — quando voxcpm importerà torch.nn.functional prenderà questa
     F.scaled_dot_product_attention = _safe_sdpa
+    torch.nn.functional.scaled_dot_product_attention = _safe_sdpa
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # PATCH AGGRESSIVA: aggiorna anche i riferimenti già catturati nei moduli
-    # importati da voxcpm (from torch.nn.functional import scaled_dot_product_attention)
-    # ═══════════════════════════════════════════════════════════════════════════
-    import sys
-    for mod_name, mod in list(sys.modules.items()):
-        if mod is None:
-            continue
-        # Caso 1: il modulo ha importato direttamente la funzione
-        if hasattr(mod, "scaled_dot_product_attention"):
-            try:
-                if mod.scaled_dot_product_attention is _orig:
-                    mod.scaled_dot_product_attention = _safe_sdpa
-            except Exception:
-                pass
-        # Caso 2: il modulo ha un alias F = torch.nn.functional
-        if hasattr(mod, "F") and hasattr(mod.F, "scaled_dot_product_attention"):
-            try:
-                if mod.F.scaled_dot_product_attention is _orig:
-                    mod.F.scaled_dot_product_attention = _safe_sdpa
-            except Exception:
-                pass
+    # Patch sui riferimenti interni di voxcpm se già caricati/disponibili
+    try:
+        import voxcpm.core as vc
+        if hasattr(vc, "F") and hasattr(vc.F, "scaled_dot_product_attention"):
+            vc.F.scaled_dot_product_attention = _safe_sdpa
+        if hasattr(vc, "scaled_dot_product_attention"):
+            vc._orig_sdpa = vc.scaled_dot_product_attention
+            vc.scaled_dot_product_attention = _safe_sdpa
+    except Exception:
+        pass
 
-    _sdpa_patched = True
-    logger.debug("SDPA patched aggressively for CPU stability")
+    F._voxcpm_sdpa_patched = True
 
 
-# ── Rimuovi _unpatch_sdpa_for_cpu() o lasciala vuota ─────────────────────────
 def _unpatch_sdpa_for_cpu():
     """Non fare nulla: la patch deve restare attiva per tutta l'inferenza."""
     pass
 
 
-
 class VoxCPMTTSPipeline:
     """VoxCPM2 streaming pipeline wrapper con voice cloning (CPU/GPU)."""
 
-    MAX_CHUNK_CHARS: int = 400  # VoxCPM gestisce testi più lunghi di XTTS
+    MAX_CHUNK_CHARS: int = 400
     CHUNK_SILENCE_SEC: float = 0.1
 
     def __init__(self, config: dict):
         self.config = config
         model_cfg = config["model"]
 
-        # Determina dispositivo (GPU se disponibile, altrimenti CPU)
-        import torch
-
-        # Priority: config override > CUDA availability > CPU fallback
+        # Determina dispositivo
         force_cpu = (
-            self.config["model"].get("force_cpu", False)
-            or self.config["model"].get("device") == "cpu"
+            model_cfg.get("force_cpu", False)
+            or model_cfg.get("device") == "cpu"
         )
 
         if force_cpu:
             self.device = "cpu"
             logger.info("CPU forced via config")
-
-            # Nascondi completamente le GPU da PyTorch
-            import os
-
             if not os.environ.get("CUDA_VISIBLE_DEVICES"):
                 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
                 logger.info("Nascosto CUDA_VISIBLE_DEVICES=-1 per forzare CPU")
         elif torch.cuda.is_available():
             self.device = "cuda"
-            logger.info(f"CUDA available - using GPU")
+            logger.info("CUDA available - using GPU")
         else:
             self.device = "cpu"
             logger.info("No CUDA available - using CPU")
 
-        # Imposta numero thread PyTorch per CPU
-        if self.device == "cpu":
-            logger.info("⚡ Applicazione Patch SDPA per stabilità su CPU...")
-            _patch_sdpa_for_cpu()
-            num_threads = model_cfg.get("num_threads_cpu", 4)
-            torch.set_num_threads(num_threads)
-            logger.info(f"CPU threads: {num_threads}")
-
         self.sr = 48000  # VoxCPM2 nativo (48kHz)
 
-        # Carica modello da HuggingFace (o path locale)
         model_path = model_cfg.get("pretrained_path", "openbmb/VoxCPM2")
         dtype_str = model_cfg.get("dtype", "float32")
         dtype_map = {
@@ -169,38 +165,6 @@ class VoxCPMTTSPipeline:
 
         _ensure_voxcpm_installed()
 
-        # ═══════════════════════════════════════════════════════════════════════
-        # CPU FORCE: VoxCPM2 guarda torch.cuda.is_available() per decidere.
-        # Dobbiamo ingannarlo perché torch è già importato nel processo.
-        # ═══════════════════════════════════════════════════════════════════════
-        # Imposta numero thread PyTorch per CPU
-        if self.device == "cpu":
-            logger.info("⚡ Applicazione Patch SDPA per stabilità su CPU...")
-            _patch_sdpa_for_cpu()  # <-- PRIMA di importare voxcpm!
-            num_threads = model_cfg.get("num_threads_cpu", 4)
-            torch.set_num_threads(num_threads)
-            torch.set_num_interop_threads(num_threads)
-            logger.info(f"CPU threads: {num_threads}")
-
-        self.sr = 48000  # VoxCPM2 nativo (48kHz)
-
-        # Carica modello da HuggingFace (o path locale)
-        model_path = model_cfg.get("pretrained_path", "openbmb/VoxCPM2")
-        dtype_str = model_cfg.get("dtype", "float32")
-        dtype_map = {
-            "float32": torch.float32,
-            "float16": torch.float16,
-            "bfloat16": torch.bfloat16,
-        }
-        self.dtype = dtype_map.get(dtype_str, torch.float32)
-
-        logger.info(f"Loading VoxCPM2 from {model_path} on {self.device.upper()}...")
-        logger.info(f"  Device: {self.device} | Dtype: {dtype_str}")
-
-        _ensure_voxcpm_installed()
-
-        # Monkey-patch torch.cuda per forzare CPU (VoxCPM2 ignora il nostro device)
-        # Imposta numero thread PyTorch per CPU
         if self.device == "cpu":
             logger.info("⚡ Applicazione Patch SDPA per stabilità su CPU...")
             _patch_sdpa_for_cpu()
@@ -208,29 +172,15 @@ class VoxCPMTTSPipeline:
             torch.set_num_threads(num_threads)
             logger.info(f"CPU threads: {num_threads}")
 
-        self.sr = 48000
-
-        model_path = model_cfg.get("pretrained_path", "openbmb/VoxCPM2")
-        dtype_str = model_cfg.get("dtype", "float32")
-        dtype_map = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}
-        self.dtype = dtype_map.get(dtype_str, torch.float32)
-
-        logger.info(f"Loading VoxCPM2 from {model_path} on {self.device.upper()}...")
-        logger.info(f"  Device: {self.device} | Dtype: {dtype_str}")
-
-        # Monkey-patch torch.cuda PRIMA di importare voxcpm
         if self.device == "cpu":
             torch.cuda.is_available = lambda: False
             torch.cuda.device_count = lambda: 0
             logger.info("  Monkey-patched torch.cuda → forced CPU visibility")
 
-        # Importa voxcpm DOPO la patch SDPA
         from voxcpm import VoxCPM
 
-        # Passa device="cpu" esplicitamente (documentato nella FAQ ufficiale)
         self.model = VoxCPM.from_pretrained(
             model_path,
-            device=self.device,      # ← AGGIUNGI QUESTO
             load_denoiser=False,
             optimize=False,
         )
@@ -319,11 +269,7 @@ class VoxCPMTTSPipeline:
         speed: float = 1.0,
         inference_timesteps: int = 4,
     ) -> Generator[np.ndarray, None, None]:
-        """Genera audio per un singolo chunk con streaming.
-
-        Yields raw np.ndarray (no sample rate tuple).
-        Used by generate_realtime_stream (raw arrays) and stream_voice_clone (wraps in tuple).
-        """
+        """Genera audio per un singolo chunk con streaming."""
         try:
             for chunk in self.model.generate_streaming(
                 text=text,
@@ -415,7 +361,7 @@ class VoxCPMTTSPipeline:
         speed: float = 1.0,
         inference_timesteps: Optional[int] = None,
     ) -> Generator[np.ndarray, None, None]:
-        """Generatore realtime per playback immediato (language ignorata - auto-detect)."""
+        """Generatore realtime per playback immediato."""
         if not ref_audio:
             ref_audio = self.config["model"].get("ref_audio_path")
 
@@ -425,8 +371,10 @@ class VoxCPMTTSPipeline:
         if inference_timesteps is None:
             inference_timesteps = self.config["model"].get("inference_timesteps", 1)
 
-        logger.info(f"Streaming VoxCPM2 | voice: {os.path.basename(ref_audio)} | steps: {inference_timesteps}")
-
+        logger.info(
+            f"Streaming VoxCPM2 | voice: {os.path.basename(ref_audio)} | "
+            f"steps: {inference_timesteps}"
+        )
         logger.info(f"Streaming TTS started for: {text[:30]}...")
 
         latents = self._get_latents(ref_audio)
@@ -437,7 +385,9 @@ class VoxCPMTTSPipeline:
         logger.info(f"Streaming VoxCPM2 | voice: {os.path.basename(ref_audio)}")
 
         for idx, chunk in enumerate(chunks, start=1):
-            for audio_piece in self._infer_chunk_stream(chunk, ref_audio, speed, inference_timesteps):
+            for audio_piece in self._infer_chunk_stream(
+                chunk, ref_audio, speed, inference_timesteps
+            ):
                 if audio_piece is not None and len(audio_piece) > 0:
                     yield audio_piece.astype(np.float32)
 
