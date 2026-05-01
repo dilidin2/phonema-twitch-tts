@@ -81,7 +81,13 @@ pip install voxcpm numpy fastapi uvicorn python-multipart twitchAPI pyyaml \
 
 ### Environment Variables (`.env`)
 
-Copy `.env.example` to `.env` and fill in the values:
+Copy `.env.example` to `.env`
+
+``` bash
+cp .env.example .env
+```
+
+and fill in the values:
 
 ```ini
 # Twitch API credentials (from https://dev.twitch.tv/console)
@@ -108,9 +114,13 @@ HOST=127.0.0.1
 
 ### Model Config (`config/tts_config.yaml`)
 
+Change the nome of the config:
+
 ```bash
 cp config/tts_config.yaml.exemple config/tts_config.yaml
 ```
+
+Preview of the config:
 
 ```yaml
 model:
