@@ -194,7 +194,7 @@ class TTSService:
                 )
 
                 # Limited capacity queue for back-pressure
-                audio_buffer = asyncio.Queue(maxsize=100)  # Max 5 chunks ahead
+                audio_buffer = asyncio.Queue(maxsize=100)
                 streaming_done = asyncio.Event()
                 chunk_count = 0
 
@@ -242,14 +242,12 @@ class TTSService:
                     nonlocal chunk_count
                     accumulated: list = []
 
-                    # Buffering basato sul NUMERO di chunk, non sul tempo
-                    # Aspetta 3 chunk prima di iniziare il playback per dare vantaggio alla CPU
                     TARGET_BUFFER_CHUNKS = 1
 
                     while True:
                         try:
                             chunk = await asyncio.wait_for(
-                                audio_buffer.get(), timeout=0.5
+                                audio_buffer.get(), timeout=2.0
                             )
                         except asyncio.TimeoutError:
                             # Flush whatever we have if streaming is done

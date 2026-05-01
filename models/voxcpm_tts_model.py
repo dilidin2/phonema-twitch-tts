@@ -12,6 +12,8 @@ import re
 import numpy as np
 import soundfile as sf
 import torch
+torch.backends.mkldnn.enabled = True
+torch.set_num_threads(os.cpu_count())
 import torch.nn.functional as F
 from typing import Tuple, Optional, Generator, List, Dict
 from loguru import logger
@@ -274,6 +276,7 @@ class VoxCPMTTSPipeline:
             for chunk in self.model.generate_streaming(
                 text=text,
                 reference_wav_path=ref_audio,
+                inference_timesteps=inference_timesteps,
             ):
                 if chunk is not None and len(chunk) > 0:
                     yield chunk.astype(np.float32)
@@ -306,7 +309,10 @@ class VoxCPMTTSPipeline:
 
         for idx, chunk in enumerate(chunks, start=1):
             logger.debug(f"  Chunk {idx}/{n}: '{chunk[:50]}...'")
-            for audio_piece in self._infer_chunk_stream(chunk, ref_audio, speed):
+            for audio_piece in self._infer_chunk_stream(
+                chunk, ref_audio, speed,
+                self.config["model"].get("inference_timesteps", 4)  # ← leggi dalla config
+            ):
                 if len(audio_piece) > 0:
                     yield audio_piece.astype(np.float32), self.sr
 
