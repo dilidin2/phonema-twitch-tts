@@ -127,6 +127,11 @@ async def lifespan(app: FastAPI):
     audio_service = AudioOutputService(
         method=CONFIG.get("AUDIO_OUTPUT_METHOD", "direct"),
         samplerate=samplerate,
+        # Nome del sink pulse/pipewire a cui instradare l'audio (es. un sink
+        # virtuale collegato a OBS). Se assente o non trovato sul sistema,
+        # si usa automaticamente il sink di default — nessuna dipendenza
+        # da hardware specifico della macchina.
+        sink_name=CONFIG.get("AUDIO_SINK_NAME") or None,
     )
     tts_service = TTSService(CONFIG, audio_service=audio_service)
     await tts_service.start_workers(num_workers=1)
