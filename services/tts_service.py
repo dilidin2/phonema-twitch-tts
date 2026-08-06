@@ -101,6 +101,10 @@ class VoiceRotator:
             f"{display_names}"
         )
 
+        # State for rotation modes
+        self._index = 0
+        self._last_idx = -1
+
     def next(self) -> str:
         from models.pocket_tts_model import _is_catalog_voice
 
