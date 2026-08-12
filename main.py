@@ -22,6 +22,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def load_blacklist():
+    """Carica la blacklist dagli utenti nel file config/blacklist.txt."""
+    path = "config/blacklist.txt"
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            return {line.strip().lower() for line in f if line.strip()}
+    return set()
+
+
 def load_config():
     with open("config/tts_config.yaml", "r") as f:
         config = yaml.safe_load(f)
@@ -34,6 +43,9 @@ def load_config():
 
 
 CONFIG = load_config()
+BLACKLIST = load_blacklist()
+
+logger.info(f"Blacklist caricata: {len(BLACKLIST)} utente/i → {BLACKLIST}")
 
 # Import services
 from services.tts_service import TTSService
@@ -175,6 +187,11 @@ async def lifespan(app: FastAPI):
         text = data.get("user_input", "") or ""
         user_name = data.get("user_name", "A user")
         reward_title = data.get("reward_title", "")
+
+        # Blacklist check
+        if user_name.lower() in BLACKLIST:
+            logger.info(f"Redemption ignored: {user_name} is blacklisted")
+            return
 
         # Filtro per nome redemption (se configurato)
         required_name = CONFIG.get("redemption_name", "")
