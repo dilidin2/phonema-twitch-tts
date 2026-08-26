@@ -23,7 +23,7 @@ load_dotenv()
 
 
 def load_blacklist():
-    """Carica la blacklist dagli utenti nel file config/blacklist.txt."""
+    """Load the user blacklist from config/blacklist.txt."""
     path = "config/blacklist.txt"
     if os.path.exists(path):
         with open(path, "r") as f:
@@ -45,7 +45,7 @@ def load_config():
 CONFIG = load_config()
 BLACKLIST = load_blacklist()
 
-logger.info(f"Blacklist caricata: {len(BLACKLIST)} utente/i → {BLACKLIST}")
+logger.info(f"Blacklist loaded: {len(BLACKLIST)} user(s) → {BLACKLIST}")
 
 # Import services
 from services.tts_service import TTSService
@@ -97,7 +97,7 @@ async def lifespan(app: FastAPI):
         cuda_available = False
 
         if torch.cuda.is_available():
-            # Testiamo fisicamente le GPU
+            # Physically test the GPUs
             for i in range(torch.cuda.device_count()):
                 try:
                     torch.cuda.get_device_properties(i)
@@ -139,10 +139,10 @@ async def lifespan(app: FastAPI):
     audio_service = AudioOutputService(
         method=CONFIG.get("AUDIO_OUTPUT_METHOD", "direct"),
         samplerate=samplerate,
-        # Nome del sink pulse/pipewire a cui instradare l'audio (es. un sink
-        # virtuale collegato a OBS). Se assente o non trovato sul sistema,
-        # si usa automaticamente il sink di default — nessuna dipendenza
-        # da hardware specifico della macchina.
+        # Name of the Pulse/PipeWire sink to route audio to (e.g. a virtual
+        # sink connected to OBS). If absent or not found on the system, the
+        # default sink is used automatically — no dependency on specific
+        # hardware of the machine.
         sink_name=CONFIG.get("AUDIO_SINK_NAME") or None,
     )
     tts_service = TTSService(CONFIG, audio_service=audio_service)
@@ -193,10 +193,10 @@ async def lifespan(app: FastAPI):
             logger.info(f"Redemption ignored: {user_name} is blacklisted")
             return
 
-        # Filtro per nome redemption (se configurato)
+        # Redemption name filter (if configured)
         required_name = CONFIG.get("redemption_name", "")
         if required_name and reward_title != required_name:
-            logger.debug(f"Redemption '{reward_title}' ignorata (attesa: '{required_name}')")
+            logger.debug(f"Redemption '{reward_title}' ignored (expected: '{required_name}')")
             return
 
         if text:

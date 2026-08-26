@@ -1,9 +1,9 @@
 # ── Model selection ──────────────────────────────────────────────────────
-# "gpu_model"  → VoxCPM2 (pesante, richiede GPU CUDA/HIP)
-# "cpu_model"  → Pocket TTS (leggero, gira su CPU) — uses a less powerful model for edge devices
+# "gpu_model"  → VoxCPM2 (heavy, requires CUDA/HIP GPU)
+# "cpu_model"  → Pocket TTS (light, runs on CPU) — uses a less powerful model for edge devices
 model_type: "gpu_model"
 
-# ── VoxCPM2 config (usato solo quando model_type = "gpu_model") ─────────
+# ── VoxCPM2 config (used only when model_type = "gpu_model") ─────────
 model:
   pretrained_path: "openbmb/VoxCPM2" # HuggingFace model ID
   dtype: "bfloat16"
@@ -13,14 +13,14 @@ model:
 
   ref_audio_path: "config/reference_voice.wav" # Change this to the actual name of the audio
 
-# ── Pocket TTS config (usato solo quando model_type = "cpu_model") ──────
-# Modello leggero Kyutai, gira su CPU con voice cloning e multilingua
+# ── Pocket TTS config (used only when model_type = "cpu_model") ──────
+# Lightweight Kyutai model, runs on CPU with voice cloning and multilingual support
 pocket_tts:
   language: "italian_24l"       # "english", "italian_24l", "french_24l", "german_24l", "portuguese_24l", "spanish_24l"
-  temperature: 0.7              # campionamento (più basso = più deterministico)
-  lsd_decode_steps: 1           # più step = qualità + ma più lento (provare 5 per alta qualità)
-  eos_threshold: -4.0           # soglia end-of-sequence
-  quantize: true                # int8 quantization: meno RAM, velocità +, impatto minimo sulla qualità
+  temperature: 0.7              # sampling (lower = more deterministic)
+  lsd_decode_steps: 1           # more steps = better quality but slower (try 5 for high quality)
+  eos_threshold: -4.0           # end-of-sequence threshold
+  quantize: true                # int8 quantization: less RAM, faster, minimal quality impact
 
 redemption_name: "TTS" # Change with the name of your redemption
 
@@ -28,18 +28,18 @@ voice_rotation:
   mode: "random"
   voices_dir: "config/voices"
   voices:
-    # Mescola voci catalog (no HF login) e file personalizzati (serve HF login)
-    # Il codice rileva automaticamente il tipo in base al nome:
-    #   - "giovanni" → voce catalog built-in (NO HF login necessario)
-    #   - "voice_a.wav" → file .wav nella voices_dir (serve HF login + termini accettati)
+    # Mix catalog voices (no HF login) and custom files (HF login required)
+    # The code automatically detects the type based on the name:
+    #   - "giovanni" → built-in catalog voice (NO HF login needed)
+    #   - "voice_a.wav" → .wav file in voices_dir (HF login + accepted terms required)
     - "voice_a.wav"
     - "voice_b.wav"
     - "voice_c.wav"
-    # Scommenta per aggiungere voci catalog:
-    # - "giovanni"   # italiano
-    # - "alba"       # inglese
-    # - "anna"       # inglese
-    # - "eve"        # inglese
+    # Uncomment to add catalog voices:
+    # - "giovanni"   # Italian
+    # - "alba"       # English
+    # - "anna"       # English
+    # - "eve"        # English
 
 max_input_chars: 500
 
